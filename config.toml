@@ -1,0 +1,13 @@
+[rutas]
+cache = "data/cache"
+base_datos = "data/tesis.db"
+modelos = "modelos"
+
+[http]
+espera_entre_solicitudes = 1.0
+reintentos = 3
+
+[ligas]
+codigos = ["EPL", "La_liga", "Serie_A", "Bundesliga", "Ligue_1"]
+temporada_desde = 2014
+temporada_hasta = 2025
