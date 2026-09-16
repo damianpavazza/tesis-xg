@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 
+from tesis_xg.almacenamiento import base, carga
 from tesis_xg.config import Config, cargar_config
 from tesis_xg.ingesta import understat
 from tesis_xg.ingesta.cliente import ClienteHTTP
@@ -44,6 +45,17 @@ def _comando_descargar(args: argparse.Namespace) -> None:
         )
 
 
+def _comando_cargar(args: argparse.Namespace) -> None:
+    config = cargar_config()
+    conexion = base.crear(config.rutas.base_datos)
+    try:
+        carga.cargar_todo(conexion, config.rutas.cache)
+        print()
+        print(carga.informe_validacion(conexion))
+    finally:
+        conexion.close()
+
+
 def construir_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tesis_xg")
     subparsers = parser.add_subparsers(dest="comando", required=True)
@@ -52,6 +64,9 @@ def construir_parser() -> argparse.ArgumentParser:
     descargar.add_argument("--liga", default="EPL")
     descargar.add_argument("--temporada", type=int, default=2025)
     descargar.set_defaults(func=_comando_descargar)
+
+    cargar = subparsers.add_parser("cargar", help="Carga la caché descargada en la base SQLite")
+    cargar.set_defaults(func=_comando_cargar)
 
     return parser
 
