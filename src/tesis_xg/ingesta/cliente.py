@@ -35,7 +35,7 @@ class ClienteHTTP:
         ruta_cache = self.directorio_cache / nombre_cache
 
         if not forzar and ruta_cache.exists():
-            logger.info("cache: %s", nombre_cache)
+            logger.debug("cache: %s", nombre_cache)
             return json.loads(ruta_cache.read_text(encoding="utf8"))
 
         datos = self._solicitar(url)
