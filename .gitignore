@@ -4,6 +4,7 @@ __pycache__/
 data/cache/*
 !data/cache/.gitkeep
 data/*.db
+data/*.log
 modelos/*
 !modelos/.gitkeep
 .pytest_cache/
