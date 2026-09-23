@@ -134,6 +134,49 @@ def test_cargar_todo_es_idempotente(tmp_path: Path) -> None:
         conexion.close()
 
 
+def test_cargar_partido_con_rosters_como_lista_vacia(tmp_path: Path) -> None:
+    """Understat devuelve `rosters.h`/`rosters.a` como lista vacia (en vez de
+    objeto vacio) en algunos partidos historicos sin datos de alineacion
+    (visto en Ligue_1 2016/17, partido 4238). No debe romper la carga."""
+    liga_json = json.loads(json.dumps(LIGA_JSON))  # copia
+    liga_json["dates"].append(
+        {
+            "id": "556", "isResult": True,
+            "h": {"id": "10", "title": "Equipo A"},
+            "a": {"id": "20", "title": "Equipo B"},
+            "goals": {"h": "0", "a": "0"},
+            "datetime": "2024-01-08 15:00:00",
+        }
+    )
+    liga_json["teams"]["10"]["history"].append(
+        {**LIGA_JSON["teams"]["10"]["history"][0], "date": "2024-01-08 15:00:00"}
+    )
+    liga_json["teams"]["20"]["history"].append(
+        {**LIGA_JSON["teams"]["20"]["history"][0], "date": "2024-01-08 15:00:00"}
+    )
+    partido_sin_datos = {
+        "rosters": {"h": [], "a": []},
+        "shots": {"h": [], "a": []},
+    }
+
+    (tmp_path / "liga_EPL_2024.json").write_text(json.dumps(liga_json), encoding="utf8")
+    (tmp_path / "partido_556.json").write_text(json.dumps(partido_sin_datos), encoding="utf8")
+
+    conexion = base.crear(tmp_path / "tesis.db")
+    try:
+        carga.cargar_todo(conexion, tmp_path)  # no debe lanzar excepcion
+
+        partido = conexion.execute("SELECT * FROM partido WHERE id = 556").fetchone()
+        assert partido is not None
+
+        (n_disparos,) = conexion.execute(
+            "SELECT COUNT(*) FROM disparo WHERE partido_id = 556"
+        ).fetchone()
+        assert n_disparos == 0
+    finally:
+        conexion.close()
+
+
 def test_recargar_no_borra_xg_propio(tmp_path: Path) -> None:
     """xg_propio lo completa la etapa de modelo: recargar desde la cache
     (p.ej. tras agregar mas partidos) no debe pisarlo con NULL."""

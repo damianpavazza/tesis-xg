@@ -33,6 +33,19 @@ from tesis_xg.ingesta.cliente import ClienteHTTP  # noqa: E402
 
 logger = logging.getLogger("backfill")
 
+# Partidos confirmados manualmente como huecos reales de la fuente (no
+# fallos de descarga): el validador no los cuenta como "sin disparos".
+# Cualquier partido sin disparos que NO esté acá sigue deteniendo el
+# backfill para revisión.
+EXCEPCIONES_SIN_DISPAROS: dict[int, str] = {
+    4238: (
+        "SC Bastia vs Lyon, Ligue_1 2016/17 (2017-04-16): partido no "
+        "disputado por incidentes de la hinchada de Bastia; resultado "
+        "3-0 otorgado a Lyon por decisión administrativa. Understat no "
+        "tiene alineaciones ni disparos porque no se jugó."
+    ),
+}
+
 
 def _crear_cliente(config: Config) -> ClienteHTTP:
     return ClienteHTTP(
@@ -79,19 +92,27 @@ def _validar_temporada(conexion, codigos: list[str], temporada: int) -> list[str
             problemas.append(f"{codigo} {temporada}: 0 partidos cargados (¿falló la descarga?)")
             continue
 
-        (partidos_sin_disparos,) = conexion.execute(
-            """
-            SELECT COUNT(*) FROM partido p
-            JOIN temporada t ON t.id = p.temporada_id
-            JOIN liga l ON l.id = t.liga_id
-            WHERE l.codigo = ? AND t.anio_inicio = ?
-              AND NOT EXISTS (SELECT 1 FROM disparo d WHERE d.partido_id = p.id)
-            """,
-            (codigo, temporada),
-        ).fetchone()
-        if partidos_sin_disparos:
+        ids_sin_disparos = [
+            fila[0]
+            for fila in conexion.execute(
+                """
+                SELECT p.id FROM partido p
+                JOIN temporada t ON t.id = p.temporada_id
+                JOIN liga l ON l.id = t.liga_id
+                WHERE l.codigo = ? AND t.anio_inicio = ?
+                  AND NOT EXISTS (SELECT 1 FROM disparo d WHERE d.partido_id = p.id)
+                """,
+                (codigo, temporada),
+            )
+        ]
+        nuevos_sin_disparos = [pid for pid in ids_sin_disparos if pid not in EXCEPCIONES_SIN_DISPAROS]
+        for pid in ids_sin_disparos:
+            if pid in EXCEPCIONES_SIN_DISPAROS:
+                print(f"    (excepción conocida) partido {pid}: {EXCEPCIONES_SIN_DISPAROS[pid]}")
+        if nuevos_sin_disparos:
             problemas.append(
-                f"{codigo} {temporada}: {partidos_sin_disparos} partido(s) sin ningún disparo cargado"
+                f"{codigo} {temporada}: {len(nuevos_sin_disparos)} partido(s) sin ningún disparo "
+                f"cargado y sin excepción conocida: {nuevos_sin_disparos}"
             )
 
         (disparos_sin_jugador,) = conexion.execute(

@@ -259,7 +259,12 @@ def _cargar_partido_json(conexion: sqlite3.Connection, partido_id: int, datos: d
     # jugadores y evita colisiones de nombre entre partidos distintos.
     nombre_a_id: dict[str, int] = {}
     for lado in ("h", "a"):
-        for jugador in datos["rosters"][lado].values():
+        roster_lado = datos["rosters"][lado]
+        # Understat normalmente devuelve un objeto {player_id: {...}}, pero
+        # cuando no tiene datos de alineacion para el partido devuelve una
+        # lista vacia en su lugar (visto en partidos historicos puntuales).
+        jugadores_del_lado = roster_lado.values() if isinstance(roster_lado, dict) else roster_lado
+        for jugador in jugadores_del_lado:
             jugador_id = int(jugador["player_id"])
             _upsert_jugador(conexion, jugador_id, jugador["player"])
             nombre_a_id[jugador["player"]] = jugador_id
