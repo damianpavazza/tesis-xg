@@ -44,6 +44,16 @@ EXCEPCIONES_SIN_DISPAROS: dict[int, str] = {
         "3-0 otorgado a Lyon por decisión administrativa. Understat no "
         "tiene alineaciones ni disparos porque no se jugó."
     ),
+    27930: (
+        "Holstein Kiel 2-2 Bochum, Bundesliga 2024/25 (2025-02-09): a "
+        "diferencia del caso anterior, este partido SÍ se disputó con "
+        "normalidad (goles confirmados de Skrzybski, Boadu x2 y Zec vía "
+        "ESPN/Sportsmole/WhoScored). No hay evidencia de ningún "
+        "incidente; Understat simplemente no tiene el detalle de "
+        "disparos para este partido puntual (verificado en vivo el "
+        "2026-09-23) — un hueco en su propio pipeline de datos, de "
+        "causa desconocida."
+    ),
 }
 
 
