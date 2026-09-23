@@ -1,9 +1,14 @@
 import math
 
+import numpy as np
 import pytest
 
 from tesis_xg.almacenamiento import base
-from tesis_xg.modelo.features import calcular_distancia_angulo, completar_variables_derivadas
+from tesis_xg.modelo.features import (
+    AgruparCategoriasRaras,
+    calcular_distancia_angulo,
+    completar_variables_derivadas,
+)
 
 
 def test_disparo_centrado_sobre_la_linea_de_gol() -> None:
@@ -80,3 +85,18 @@ def test_completar_variables_derivadas_persiste_en_la_base(tmp_path) -> None:
         assert fila["angulo"] == pytest.approx(math.pi)
     finally:
         conexion.close()
+
+
+def test_agrupar_categorias_raras() -> None:
+    """Sección 6.2: categorías con menos de `minimo` apariciones en el
+    conjunto de ajuste se agrupan bajo "Otras"; una categoría nunca
+    vista en el ajuste también cae en "Otras" al transformar."""
+    entrenamiento = np.array(["Pass"] * 5 + ["Cross"] * 3 + ["Rebound"] * 1).reshape(-1, 1)
+
+    agrupador = AgruparCategoriasRaras(minimo=4)
+    agrupador.fit(entrenamiento)
+    assert agrupador.categorias_frecuentes_ == {"Pass"}
+
+    prueba = np.array(["Pass", "Cross", "Rebound", "NuncaVista"]).reshape(-1, 1)
+    resultado = agrupador.transform(prueba).ravel().tolist()
+    assert resultado == ["Pass", "Otras", "Otras", "Otras"]

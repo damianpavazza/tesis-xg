@@ -42,9 +42,22 @@ python -m tesis_xg descargar                       # usa los valores de config.t
 
 # Transforma la cache y la persiste en SQLite (no usa red)
 python -m tesis_xg cargar
+
+# Calcula variables derivadas (distancia/angulo) y entrena la regresion
+# logistica con particion temporal 2014-21 / 2022 / 2023-25
+python -m tesis_xg entrenar
+
+# Evalua contra el conjunto de prueba y contra el xG del proveedor;
+# persiste modelos/metricas.json
+python -m tesis_xg evaluar
 ```
 
-Pendientes de etapas futuras: `entrenar`, `evaluar`, `dashboard`.
+Pendiente de una etapa futura: `dashboard`.
+
+El backfill histórico completo (2014-2025, 5 ligas) ya se corrió una vez
+sobre esta base con corte de validación por temporada — ver
+`scripts/backfill_historico.py` y la sección correspondiente de
+[DESVIACIONES.md](DESVIACIONES.md).
 
 ### Descarga: tiempo estimado
 

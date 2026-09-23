@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 
 import requests
@@ -9,6 +10,9 @@ from tesis_xg.almacenamiento import base, carga
 from tesis_xg.config import Config, cargar_config
 from tesis_xg.ingesta import understat
 from tesis_xg.ingesta.cliente import ClienteHTTP
+from tesis_xg.modelo import entrenar as entrenar_modulo
+from tesis_xg.modelo import evaluar as evaluar_modulo
+from tesis_xg.modelo import features
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +87,27 @@ def _comando_cargar(args: argparse.Namespace) -> None:
         conexion.close()
 
 
+def _comando_entrenar(args: argparse.Namespace) -> None:
+    config = cargar_config()
+    conexion = base.crear(config.rutas.base_datos)
+    try:
+        features.completar_variables_derivadas(conexion)
+        info = entrenar_modulo.entrenar(conexion, config.rutas.modelos)
+        print(json.dumps(info, ensure_ascii=False, indent=2))
+    finally:
+        conexion.close()
+
+
+def _comando_evaluar(args: argparse.Namespace) -> None:
+    config = cargar_config()
+    conexion = base.crear(config.rutas.base_datos)
+    try:
+        metricas = evaluar_modulo.evaluar(conexion, config.rutas.modelos)
+        print(json.dumps(metricas, ensure_ascii=False, indent=2))
+    finally:
+        conexion.close()
+
+
 def construir_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tesis_xg")
     subparsers = parser.add_subparsers(dest="comando", required=True)
@@ -95,6 +120,12 @@ def construir_parser() -> argparse.ArgumentParser:
 
     cargar = subparsers.add_parser("cargar", help="Carga la caché descargada en la base SQLite")
     cargar.set_defaults(func=_comando_cargar)
+
+    entrenar = subparsers.add_parser("entrenar", help="Entrena el modelo de xG propio")
+    entrenar.set_defaults(func=_comando_entrenar)
+
+    evaluar = subparsers.add_parser("evaluar", help="Evalúa el modelo contra el conjunto de prueba")
+    evaluar.set_defaults(func=_comando_evaluar)
 
     return parser
 

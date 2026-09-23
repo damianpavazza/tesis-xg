@@ -3,9 +3,14 @@ from __future__ import annotations
 import math
 import sqlite3
 
+import numpy as np
+import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin
+
 LARGO_CANCHA_M = 105.0
 ANCHO_CANCHA_M = 68.0
 ANCHO_ARCO_M = 7.32
+MIN_APARICIONES_ACCION_PREVIA = 500
 
 
 def calcular_distancia_angulo(x: float, y: float) -> tuple[float, float]:
@@ -44,3 +49,59 @@ def completar_variables_derivadas(conexion: sqlite3.Connection) -> int:
     )
     conexion.commit()
     return len(actualizaciones)
+
+
+def construir_dataset(conexion: sqlite3.Connection, incluir_penales: bool = False) -> pd.DataFrame:
+    """Disparos con sus variables derivadas y la temporada a la que
+    pertenecen, para entrenar/evaluar el modelo (sección 6.2). Por
+    defecto excluye penales: son un caso degenerado (distancia y ángulo
+    fijos) que se trata aparte."""
+    condicion = "" if incluir_penales else "WHERE d.situacion != 'Penalty'"
+    consulta = f"""
+        SELECT
+            d.id AS disparo_id,
+            d.partido_id,
+            d.equipo_id,
+            d.distancia,
+            d.angulo,
+            d.situacion,
+            d.tipo_disparo,
+            d.accion_previa,
+            d.es_gol,
+            d.xg_understat,
+            t.anio_inicio AS temporada
+        FROM disparo d
+        JOIN partido p ON p.id = d.partido_id
+        JOIN temporada t ON t.id = p.temporada_id
+        {condicion}
+    """
+    return pd.read_sql_query(consulta, conexion)
+
+
+class AgruparCategoriasRaras(BaseEstimator, TransformerMixin):
+    """Reemplaza por "Otras" las categorías con menos de `minimo`
+    apariciones en el conjunto sobre el que se ajusta (sección 6.2).
+
+    El umbral se aprende solo del conjunto de entrenamiento (`fit`): una
+    categoría rara en entrenamiento pero frecuente en prueba no debe
+    "verse" antes de tiempo, y una categoría nunca vista en
+    entrenamiento cae naturalmente en "Otras".
+    """
+
+    def __init__(self, minimo: int = MIN_APARICIONES_ACCION_PREVIA):
+        self.minimo = minimo
+
+    def fit(self, X, y=None):
+        serie = pd.Series(np.asarray(X).ravel())
+        conteos = serie.value_counts()
+        self.categorias_frecuentes_ = set(conteos[conteos >= self.minimo].index)
+        return self
+
+    def transform(self, X):
+        serie = pd.Series(np.asarray(X).ravel())
+        transformado = serie.where(serie.isin(self.categorias_frecuentes_), "Otras")
+        return transformado.to_numpy().reshape(-1, 1)
+
+    def get_feature_names_out(self, input_features=None):
+        # No cambia la cantidad de columnas, solo recodifica valores.
+        return np.asarray(input_features, dtype=object)
