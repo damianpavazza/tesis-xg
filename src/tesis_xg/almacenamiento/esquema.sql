@@ -82,3 +82,28 @@ CREATE TABLE IF NOT EXISTS disparo (
 CREATE INDEX IF NOT EXISTS idx_disparo_partido  ON disparo(partido_id);
 CREATE INDEX IF NOT EXISTS idx_disparo_jugador  ON disparo(jugador_id);
 CREATE INDEX IF NOT EXISTS idx_partido_temporada ON partido(temporada_id);
+
+-- No está en la especificación original (sección 4): se agregó en la
+-- Etapa 8 porque la sección 7 pide "goles contra xG por jugador y
+-- temporada, con mínimo de minutos configurable", y ese mínimo de
+-- minutos no tiene dónde vivir sin esta tabla. Viene del arreglo
+-- `players` de `getLeagueData`, que ya se descarga y cachea pero hasta
+-- ahora solo se usaba para poblar `jugador` (id + nombre). Ver
+-- DESVIACIONES.md, Etapa 8.
+CREATE TABLE IF NOT EXISTS jugador_temporada (
+    jugador_id    INTEGER NOT NULL REFERENCES jugador(id),
+    temporada_id  INTEGER NOT NULL REFERENCES temporada(id),
+    equipo        TEXT,
+    posicion      TEXT,
+    partidos      INTEGER,
+    minutos       INTEGER,
+    goles         INTEGER,
+    goles_np      INTEGER,
+    asistencias   INTEGER,
+    xg            REAL,
+    xg_np         REAL,
+    xa            REAL,
+    disparos      INTEGER,
+    pases_clave   INTEGER,
+    PRIMARY KEY (jugador_id, temporada_id)
+);

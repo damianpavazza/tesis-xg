@@ -88,6 +88,27 @@ def _upsert_jugador(conexion: sqlite3.Connection, jugador_id: int, nombre: str) 
     )
 
 
+def _upsert_jugador_temporada(conexion: sqlite3.Connection, fila: dict) -> None:
+    conexion.execute(
+        """
+        INSERT INTO jugador_temporada
+            (jugador_id, temporada_id, equipo, posicion, partidos, minutos,
+             goles, goles_np, asistencias, xg, xg_np, xa, disparos, pases_clave)
+        VALUES
+            (:jugador_id, :temporada_id, :equipo, :posicion, :partidos, :minutos,
+             :goles, :goles_np, :asistencias, :xg, :xg_np, :xa, :disparos, :pases_clave)
+        ON CONFLICT (jugador_id, temporada_id) DO UPDATE SET
+            equipo = excluded.equipo, posicion = excluded.posicion,
+            partidos = excluded.partidos, minutos = excluded.minutos,
+            goles = excluded.goles, goles_np = excluded.goles_np,
+            asistencias = excluded.asistencias, xg = excluded.xg,
+            xg_np = excluded.xg_np, xa = excluded.xa,
+            disparos = excluded.disparos, pases_clave = excluded.pases_clave
+        """,
+        fila,
+    )
+
+
 def _upsert_partido(conexion: sqlite3.Connection, partido: dict) -> None:
     conexion.execute(
         """
@@ -165,7 +186,27 @@ def _cargar_liga_json(conexion: sqlite3.Connection, codigo: str, temporada: int,
         _upsert_equipo(conexion, int(equipo["id"]), equipo["title"])
 
     for jugador in datos["players"]:
-        _upsert_jugador(conexion, int(jugador["id"]), jugador["player_name"])
+        jugador_id = int(jugador["id"])
+        _upsert_jugador(conexion, jugador_id, jugador["player_name"])
+        _upsert_jugador_temporada(
+            conexion,
+            {
+                "jugador_id": jugador_id,
+                "temporada_id": temporada_id,
+                "equipo": jugador["team_title"],
+                "posicion": jugador["position"],
+                "partidos": int(jugador["games"]),
+                "minutos": int(jugador["time"]),
+                "goles": int(jugador["goals"]),
+                "goles_np": int(jugador["npg"]),
+                "asistencias": int(jugador["assists"]),
+                "xg": float(jugador["xG"]),
+                "xg_np": float(jugador["npxG"]),
+                "xa": float(jugador["xA"]),
+                "disparos": int(jugador["shots"]),
+                "pases_clave": int(jugador["key_passes"]),
+            },
+        )
 
     # teams[*].history no trae el id de partido, solo la fecha: se cruza
     # por (equipo, fecha) contra datesData para reconstruir equipo_partido.

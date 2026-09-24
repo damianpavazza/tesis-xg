@@ -35,8 +35,18 @@ LIGA_JSON = {
         },
     },
     "players": [
-        {"id": "100", "player_name": "Jugador Uno"},
-        {"id": "200", "player_name": "Jugador Dos"},
+        {
+            "id": "100", "player_name": "Jugador Uno", "team_title": "Equipo A",
+            "position": "F", "games": "1", "time": "90", "goals": "1", "npg": "1",
+            "assists": "0", "xG": "0.3", "npxG": "0.3", "xA": "0", "shots": "2",
+            "key_passes": "0",
+        },
+        {
+            "id": "200", "player_name": "Jugador Dos", "team_title": "Equipo B",
+            "position": "M", "games": "1", "time": "90", "goals": "0", "npg": "0",
+            "assists": "1", "xG": "0.1", "npxG": "0.1", "xA": "0.2", "shots": "1",
+            "key_passes": "1",
+        },
     ],
     "dates": [
         {

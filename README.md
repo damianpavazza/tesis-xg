@@ -58,6 +58,29 @@ python -m tesis_xg calcular-xg
 
 Pendiente de una etapa futura: `dashboard`.
 
+## Módulo de análisis
+
+`src/tesis_xg/analisis/` (`ligas.py`, `equipos.py`, `jugadores.py`)
+expone funciones que reciben la conexión y devuelven `DataFrame`, sin
+gráficos (eso es responsabilidad del dashboard):
+
+```python
+from tesis_xg.almacenamiento import base
+from tesis_xg.analisis import ligas, equipos, jugadores
+
+conexion = base.crear("data/tesis.db")
+ligas.evolucion_xg_top5(conexion, "EPL")
+ligas.tabla_posiciones_vs_xpts(conexion, "EPL", 2024)
+equipos.porcentaje_victorias_segun_xg_y_ppda(conexion, codigo_liga="EPL")
+equipos.disparos_de_partido(conexion, partido_id=28778)
+equipos.linea_tiempo_xg_partido(conexion, partido_id=28778)
+jugadores.goles_vs_xg_por_jugador(conexion, temporada=2025, minutos_minimos=1800)
+```
+
+No se implementó "distribución del xG por edad de los ejecutantes"
+(sección 7): Understat no expone edad ni fecha de nacimiento en ningún
+endpoint — ver [DESVIACIONES.md](DESVIACIONES.md), Etapa 8.
+
 El backfill histórico completo (2014-2025, 5 ligas) ya se corrió una vez
 sobre esta base con corte de validación por temporada — ver
 `scripts/backfill_historico.py` y la sección correspondiente de
