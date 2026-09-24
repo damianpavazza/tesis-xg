@@ -3,6 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import subprocess
+import sys
+from pathlib import Path
 
 import requests
 
@@ -123,6 +126,12 @@ def _comando_calcular_xg(args: argparse.Namespace) -> None:
         conexion.close()
 
 
+def _comando_dashboard(args: argparse.Namespace) -> None:
+    """Lanza el dashboard de Streamlit (sección 8)."""
+    ruta_app = Path(__file__).resolve().parent / "dashboard" / "app.py"
+    subprocess.run([sys.executable, "-m", "streamlit", "run", str(ruta_app)], check=True)
+
+
 def construir_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tesis_xg")
     subparsers = parser.add_subparsers(dest="comando", required=True)
@@ -146,6 +155,9 @@ def construir_parser() -> argparse.ArgumentParser:
         "calcular-xg", help="Completa xg_propio en toda la tabla disparo"
     )
     calcular_xg.set_defaults(func=_comando_calcular_xg)
+
+    dashboard = subparsers.add_parser("dashboard", help="Lanza el dashboard de Streamlit")
+    dashboard.set_defaults(func=_comando_dashboard)
 
     return parser
 

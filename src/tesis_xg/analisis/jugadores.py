@@ -44,3 +44,43 @@ def goles_vs_xg_por_jugador(
     return pd.read_sql_query(
         consulta, conexion, params={"temporada": temporada, "minutos_minimos": minutos_minimos}
     )
+
+
+def evolucion_jugador(conexion: sqlite3.Connection, jugador_id: int) -> pd.DataFrame:
+    """Goles y xG de un jugador a lo largo de las temporadas en las que
+    jugó. Tampoco está entre las funciones de la sección 7 (que agrupa
+    por temporada para TODOS los jugadores, no la evolución de uno
+    puntual), pero la vista "Jugador" del dashboard (sección 8) la
+    necesita: "goles contra xG **por temporada**" para un jugador."""
+    consulta = """
+        SELECT t.anio_inicio AS temporada, jt.equipo, jt.minutos,
+               jt.goles, jt.xg AS xg_understat
+        FROM jugador_temporada jt
+        JOIN temporada t ON t.id = jt.temporada_id
+        WHERE jt.jugador_id = :jugador_id
+        ORDER BY t.anio_inicio
+    """
+    return pd.read_sql_query(consulta, conexion, params={"jugador_id": jugador_id})
+
+
+def disparos_de_jugador(
+    conexion: sqlite3.Connection, jugador_id: int, temporada: int | None = None
+) -> pd.DataFrame:
+    """Disparos de un jugador (todas las temporadas, o una puntual), para
+    el mapa de disparos de la vista "Jugador" del dashboard."""
+    condicion = ""
+    parametros: dict[str, object] = {"jugador_id": jugador_id}
+    if temporada is not None:
+        condicion = "AND t.anio_inicio = :temporada"
+        parametros["temporada"] = temporada
+
+    consulta = f"""
+        SELECT d.id, d.partido_id, d.minuto, d.x, d.y, d.resultado, d.es_gol,
+               d.xg_understat, d.xg_propio
+        FROM disparo d
+        JOIN partido p ON p.id = d.partido_id
+        JOIN temporada t ON t.id = p.temporada_id
+        WHERE d.jugador_id = :jugador_id {condicion}
+        ORDER BY p.fecha, d.minuto
+    """
+    return pd.read_sql_query(consulta, conexion, params=parametros)

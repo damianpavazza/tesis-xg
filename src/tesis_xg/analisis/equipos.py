@@ -75,3 +75,25 @@ def linea_tiempo_xg_partido(conexion: sqlite3.Connection, partido_id: int) -> pd
     disparos = disparos_de_partido(conexion, partido_id).sort_values("minuto")
     disparos["xg_acumulado"] = disparos.groupby("equipo_id")["xg_understat"].cumsum()
     return disparos[["minuto", "equipo_id", "equipo", "xg_understat", "xg_acumulado"]].reset_index(drop=True)
+
+
+def evolucion_equipo_por_temporada(conexion: sqlite3.Connection, equipo_id: int) -> pd.DataFrame:
+    """Evolución de xG, xGA y ppda de un equipo a lo largo de las
+    temporadas en las que jugó. No está entre las funciones que pide la
+    sección 7 (que solo cubre el top-5 de xG/xGA), pero la vista
+    "Equipo" del dashboard (sección 8) la necesita para un equipo
+    cualquiera, no solo para los mejores cinco."""
+    consulta = """
+        SELECT
+            t.anio_inicio AS temporada,
+            SUM(ep.xg) AS xg,
+            SUM(ep.xga) AS xga,
+            AVG(ep.ppda_coef) AS ppda_coef
+        FROM equipo_partido ep
+        JOIN partido p ON p.id = ep.partido_id
+        JOIN temporada t ON t.id = p.temporada_id
+        WHERE ep.equipo_id = :equipo_id
+        GROUP BY t.anio_inicio
+        ORDER BY t.anio_inicio
+    """
+    return pd.read_sql_query(consulta, conexion, params={"equipo_id": equipo_id})

@@ -148,6 +148,16 @@ def test_disparos_y_linea_tiempo_de_partido(conexion) -> None:
     assert list(equipo_1["xg_acumulado"]) == pytest.approx([0.10, 0.40])
 
 
+def test_evolucion_equipo_por_temporada(conexion) -> None:
+    df = equipos.evolucion_equipo_por_temporada(conexion, equipo_id=1)  # A
+    assert len(df) == 1
+    fila = df.iloc[0]
+    assert fila["temporada"] == 2020
+    assert fila["xg"] == pytest.approx(40)
+    assert fila["xga"] == pytest.approx(20)
+    assert fila["ppda_coef"] == pytest.approx(8.0)
+
+
 def test_goles_vs_xg_por_jugador_respeta_minutos_minimos(conexion) -> None:
     _poblar_jugadores_temporada(conexion)
 
@@ -158,3 +168,25 @@ def test_goles_vs_xg_por_jugador_respeta_minutos_minimos(conexion) -> None:
     assert fila["goles"] == 15
     assert fila["xg_understat"] == pytest.approx(10.0)
     assert fila["goles_menos_xg"] == pytest.approx(5.0)
+
+
+def test_evolucion_jugador(conexion) -> None:
+    _poblar_jugadores_temporada(conexion)
+
+    df = jugadores.evolucion_jugador(conexion, jugador_id=200)
+    assert len(df) == 1
+    fila = df.iloc[0]
+    assert fila["temporada"] == 2020
+    assert fila["goles"] == 15
+    assert fila["xg_understat"] == pytest.approx(10.0)
+
+
+def test_disparos_de_jugador(conexion) -> None:
+    disparos = jugadores.disparos_de_jugador(conexion, jugador_id=100)
+    assert len(disparos) == 3
+
+    disparos_2020 = jugadores.disparos_de_jugador(conexion, jugador_id=100, temporada=2020)
+    assert len(disparos_2020) == 3
+
+    disparos_otra_temporada = jugadores.disparos_de_jugador(conexion, jugador_id=100, temporada=1999)
+    assert len(disparos_otra_temporada) == 0

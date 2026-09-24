@@ -54,9 +54,10 @@ python -m tesis_xg evaluar
 # Completa xg_propio en TODA la tabla disparo (no solo el conjunto de
 # prueba): no-penales via el modelo, penales via la tasa historica
 python -m tesis_xg calcular-xg
-```
 
-Pendiente de una etapa futura: `dashboard`.
+# Lanza el dashboard de Streamlit (http://localhost:8501)
+python -m tesis_xg dashboard
+```
 
 ## Módulo de análisis
 
@@ -80,6 +81,13 @@ jugadores.goles_vs_xg_por_jugador(conexion, temporada=2025, minutos_minimos=1800
 No se implementó "distribución del xG por edad de los ejecutantes"
 (sección 7): Understat no expone edad ni fecha de nacimiento en ningún
 endpoint — ver [DESVIACIONES.md](DESVIACIONES.md), Etapa 8.
+
+## Dashboard
+
+`python -m tesis_xg dashboard` abre las 5 vistas de la sección 8 (Liga,
+Equipo, Jugador, Partido, Línea de tiempo) con selector de liga y
+temporada en la barra lateral. Verificado en el navegador contra la
+base completa — ver DESVIACIONES.md, Etapa 9, para el detalle.
 
 El backfill histórico completo (2014-2025, 5 ligas) ya se corrió una vez
 sobre esta base con corte de validación por temporada — ver
