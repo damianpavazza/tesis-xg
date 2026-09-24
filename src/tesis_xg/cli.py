@@ -10,6 +10,7 @@ from tesis_xg.almacenamiento import base, carga
 from tesis_xg.config import Config, cargar_config
 from tesis_xg.ingesta import understat
 from tesis_xg.ingesta.cliente import ClienteHTTP
+from tesis_xg.modelo import aplicar as aplicar_modulo
 from tesis_xg.modelo import entrenar as entrenar_modulo
 from tesis_xg.modelo import evaluar as evaluar_modulo
 from tesis_xg.modelo import features
@@ -108,6 +109,20 @@ def _comando_evaluar(args: argparse.Namespace) -> None:
         conexion.close()
 
 
+def _comando_calcular_xg(args: argparse.Namespace) -> None:
+    """Comando aparte que completa `xg_propio` en toda la tabla `disparo`
+    (sección 6.3): no-penales vía el modelo, penales vía la tasa de
+    conversión histórica calculada al entrenar."""
+    config = cargar_config()
+    conexion = base.crear(config.rutas.base_datos)
+    try:
+        features.completar_variables_derivadas(conexion)
+        resultado = aplicar_modulo.calcular_xg_propio(conexion, config.rutas.modelos)
+        print(json.dumps(resultado, ensure_ascii=False, indent=2))
+    finally:
+        conexion.close()
+
+
 def construir_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tesis_xg")
     subparsers = parser.add_subparsers(dest="comando", required=True)
@@ -126,6 +141,11 @@ def construir_parser() -> argparse.ArgumentParser:
 
     evaluar = subparsers.add_parser("evaluar", help="Evalúa el modelo contra el conjunto de prueba")
     evaluar.set_defaults(func=_comando_evaluar)
+
+    calcular_xg = subparsers.add_parser(
+        "calcular-xg", help="Completa xg_propio en toda la tabla disparo"
+    )
+    calcular_xg.set_defaults(func=_comando_calcular_xg)
 
     return parser
 

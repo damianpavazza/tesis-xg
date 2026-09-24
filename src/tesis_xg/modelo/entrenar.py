@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from pathlib import Path
@@ -88,7 +89,7 @@ def entrenar(conexion: sqlite3.Connection, directorio_modelos: Path) -> dict:
     directorio_modelos.mkdir(parents=True, exist_ok=True)
     joblib.dump(mejor_pipeline, directorio_modelos / "modelo_xg.joblib")
 
-    return {
+    info = {
         "n_entrenamiento": len(entrenamiento),
         "n_validacion": len(validacion),
         "n_prueba": len(prueba),
@@ -101,3 +102,10 @@ def entrenar(conexion: sqlite3.Connection, directorio_modelos: Path) -> dict:
         "temporadas_validacion": TEMPORADAS_VALIDACION,
         "temporadas_prueba": TEMPORADAS_PRUEBA,
     }
+    # Se persiste junto al modelo: el comando que completa xg_propio
+    # (sección 6.3/etapa 7) corre por separado y necesita la tasa de
+    # conversión de penales sin tener que reentrenar.
+    (directorio_modelos / "entrenamiento_info.json").write_text(
+        json.dumps(info, ensure_ascii=False, indent=2), encoding="utf8"
+    )
+    return info

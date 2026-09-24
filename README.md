@@ -50,6 +50,10 @@ python -m tesis_xg entrenar
 # Evalua contra el conjunto de prueba y contra el xG del proveedor;
 # persiste modelos/metricas.json
 python -m tesis_xg evaluar
+
+# Completa xg_propio en TODA la tabla disparo (no solo el conjunto de
+# prueba): no-penales via el modelo, penales via la tasa historica
+python -m tesis_xg calcular-xg
 ```
 
 Pendiente de una etapa futura: `dashboard`.
