@@ -136,14 +136,26 @@ def _linea_tiempo_partido(_conexion: sqlite3.Connection, partido_id: int) -> pd.
     return equipos.linea_tiempo_xg_partido(_conexion, partido_id)
 
 
-def _mostrar_tabla(df: pd.DataFrame) -> None:
-    """Tabla con las columnas decimales redondeadas a 2 decimales."""
+COLUMNAS_EVOLUCION_EQUIPO = {"temporada": "Temporada", "xg": "xG", "xga": "xGA", "ppda_coef": "ppda"}
+
+COLUMNAS_DISPAROS = {
+    "id": "ID", "equipo_id": "ID equipo", "equipo": "Equipo",
+    "jugador_id": "ID jugador", "jugador": "Jugador", "minuto": "Min",
+    "x": "X", "y": "Y", "resultado": "Resultado", "es_gol": "Gol",
+    "xg_understat": "xG Understat", "xg_propio": "xG propio",
+}
+
+
+def _mostrar_tabla(df: pd.DataFrame, etiquetas: dict[str, str]) -> None:
+    """Tabla con etiquetas legibles y las columnas decimales a 2 decimales."""
     formato = {
-        columna: st.column_config.NumberColumn(format="%.2f")
+        etiquetas.get(columna, columna): st.column_config.NumberColumn(format="%.2f")
         for columna in df.columns
         if pd.api.types.is_float_dtype(df[columna])
     }
-    st.dataframe(df, use_container_width=True, hide_index=True, column_config=formato)
+    st.dataframe(
+        df.rename(columns=etiquetas), use_container_width=True, hide_index=True, column_config=formato
+    )
 
 
 def _figura_cancha() -> go.Figure:
@@ -321,7 +333,7 @@ def _vista_equipo(conexion: sqlite3.Connection, codigo_liga: str) -> None:
         "leyenda para ocultar o mostrar cada serie."
     )
 
-    _mostrar_tabla(df)
+    _mostrar_tabla(df, COLUMNAS_EVOLUCION_EQUIPO)
 
 
 def _vista_jugador(conexion: sqlite3.Connection, codigo_liga: str, temporada: int) -> None:
@@ -378,7 +390,8 @@ def _vista_partido(conexion: sqlite3.Connection, codigo_liga: str, temporada: in
     for (equipo_id, nombre_equipo), color in zip(equipos_partido, colores):
         _agregar_disparos_a_cancha(fig, disparos[disparos["equipo_id"] == equipo_id], nombre_equipo, color)
     st.plotly_chart(fig, use_container_width=True)
-    _mostrar_tabla(disparos)
+    tabla = disparos.assign(es_gol=disparos["es_gol"].map({1: "Sí", 0: "No"}))
+    _mostrar_tabla(tabla, COLUMNAS_DISPAROS)
 
 
 def _vista_linea_tiempo(conexion: sqlite3.Connection, codigo_liga: str, temporada: int) -> None:
