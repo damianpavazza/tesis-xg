@@ -13,6 +13,7 @@ import streamlit as st
 
 from tesis_xg.almacenamiento import base
 from tesis_xg.analisis import equipos, jugadores, ligas
+from tesis_xg.analisis.formato import etiqueta_temporada
 from tesis_xg.config import cargar_config
 
 LARGO_CANCHA_M = 105.0
@@ -197,10 +198,53 @@ def _agregar_disparos_a_cancha(fig: go.Figure, disparos: pd.DataFrame, nombre: s
     )
 
 
+COLUMNAS_TABLA_LIGA = {
+    "posicion_real": "Pos", "equipo": "Equipo", "pj": "PJ", "pg": "PG", "pe": "PE", "pp": "PP",
+    "g": "G", "ga": "GA", "dg": "DG", "puntos": "Pts",
+    "xg": "xG", "dif_xg": "Δ xG", "xga": "xGA", "dif_xga": "Δ xGA",
+    "xpts": "xPTS", "dif_xpts": "Δ xPTS",
+    "posicion_xpts": "Pos xPTS", "diferencia_posicion": "Dif. pos",
+}
+
+
+def _color_diferencia(valor: float, positivo_es_bueno: bool) -> str:
+    """Verde si el equipo rindió por encima de lo esperado, rojo si por debajo."""
+    if valor == 0:
+        return ""
+    bueno = (valor > 0) == positivo_es_bueno
+    return "color: #2ecc71; font-weight: 600" if bueno else "color: #e74c3c; font-weight: 600"
+
+
+def _tabla_liga_con_estilo(df: pd.DataFrame):
+    """Las columnas Δ siguen la convención de Understat (esperado − real):
+    en xG y xPTS un valor negativo es sobreperformance; en xGA, positivo."""
+    tabla = df.rename(columns=COLUMNAS_TABLA_LIGA)
+    return (
+        tabla.style
+        .map(lambda v: _color_diferencia(v, positivo_es_bueno=False), subset=["Δ xG", "Δ xPTS"])
+        .map(lambda v: _color_diferencia(v, positivo_es_bueno=True), subset=["Δ xGA"])
+        .format({
+            "xG": "{:.2f}", "xGA": "{:.2f}", "xPTS": "{:.2f}",
+            "Δ xG": "{:+.2f}", "Δ xGA": "{:+.2f}", "Δ xPTS": "{:+.2f}",
+            "DG": "{:+d}",
+        })
+    )
+
+
 def _vista_liga(conexion: sqlite3.Connection, codigo_liga: str, temporada: int) -> None:
-    st.header(f"Tabla de posiciones real vs. xPTS — {codigo_liga} {temporada}")
+    st.header(f"Tabla de posiciones real vs. xPTS — {codigo_liga} {etiqueta_temporada(temporada)}")
     df = _tabla_posiciones_vs_xpts(conexion, codigo_liga, temporada)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(
+        _tabla_liga_con_estilo(df), use_container_width=True, hide_index=True,
+        height=(len(df) + 1) * 35 + 3,
+        column_config={"Equipo": st.column_config.TextColumn("Equipo", width=200)},
+    )
+    st.caption(
+        "Δ = esperado − real (convención de Understat). Verde: rindió por encima de lo esperado "
+        "(más goles que xG, menos goles recibidos que xGA, más puntos que xPTS); rojo: por debajo. "
+        "La tabla se calcula con los resultados de los partidos: no incluye quitas administrativas "
+        "de puntos."
+    )
 
     fig = px.bar(
         df.sort_values("diferencia_posicion"), x="equipo", y="diferencia_posicion",
@@ -220,6 +264,7 @@ def _vista_equipo(conexion: sqlite3.Connection, codigo_liga: str) -> None:
     if df.empty:
         st.info("Sin datos para este equipo.")
         return
+    df = df.assign(temporada=df["temporada"].map(etiqueta_temporada))
 
     fig_xg = px.line(df, x="temporada", y=["xg", "xga"], markers=True, title="xG / xGA por temporada")
     st.plotly_chart(fig_xg, use_container_width=True)
@@ -240,13 +285,14 @@ def _vista_jugador(conexion: sqlite3.Connection, codigo_liga: str, temporada: in
 
     st.header(f"Goles contra xG por temporada — {nombre}")
     evolucion = _evolucion_jugador(conexion, jugador_id)
+    evolucion = evolucion.assign(temporada=evolucion["temporada"].map(etiqueta_temporada))
     fig = px.bar(
         evolucion, x="temporada", y=["goles", "xg_understat"], barmode="group",
         title="Goles vs. xG por temporada",
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader(f"Mapa de disparos — {temporada}")
+    st.subheader(f"Mapa de disparos — {etiqueta_temporada(temporada)}")
     disparos = _disparos_de_jugador(conexion, jugador_id, temporada)
     fig_cancha = _figura_cancha()
     _agregar_disparos_a_cancha(fig_cancha, disparos, nombre, "dodgerblue")
@@ -307,7 +353,9 @@ def main() -> None:
         format_func=lambda c: ligas_df.set_index("codigo").loc[c, "nombre"],
     )
     temporadas = _temporadas_disponibles(conexion, codigo_liga)
-    temporada = st.sidebar.selectbox("Temporada", temporadas, index=len(temporadas) - 1)
+    temporada = st.sidebar.selectbox(
+        "Temporada", temporadas, index=len(temporadas) - 1, format_func=etiqueta_temporada
+    )
 
     vista = st.sidebar.radio("Vista", ["Liga", "Equipo", "Jugador", "Partido", "Línea de tiempo"])
 

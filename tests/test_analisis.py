@@ -47,8 +47,9 @@ def _poblar(conexion) -> None:
             conexion.execute(
                 """
                 INSERT INTO equipo_partido
-                    (partido_id, equipo_id, condicion, xg, xga, xpts, puntos, ppda_coef, resultado)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (partido_id, equipo_id, condicion, xg, xga, xpts, puntos, ppda_coef, resultado,
+                     goles, goles_recibidos)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
                 """,
                 (partido_id, equipo_id, condicion, xg, xga, xpts, puntos, ppda_coef, resultado),
             )
@@ -190,3 +191,76 @@ def test_disparos_de_jugador(conexion) -> None:
 
     disparos_otra_temporada = jugadores.disparos_de_jugador(conexion, jugador_id=100, temporada=1999)
     assert len(disparos_otra_temporada) == 0
+
+
+def _tabla_con_empate(tmp_path: Path, codigo_liga: str, partidos: list[tuple[int, int, int, int]]):
+    """Arma una temporada chica con los partidos dados (local, visitante,
+    goles_local, goles_visitante) y devuelve la tabla calculada."""
+    conexion = base.crear(tmp_path / f"{codigo_liga}.db")
+    conexion.executescript(
+        f"""
+        INSERT INTO liga (codigo, nombre, pais) VALUES ('{codigo_liga}', 'Liga', 'Pais');
+        INSERT INTO temporada (liga_id, anio_inicio) VALUES (1, 2020);
+        INSERT INTO equipo (id, nombre) VALUES (1, 'A'), (2, 'B'), (3, 'C');
+        """
+    )
+    for partido_id, (local, visitante, gl, gv) in enumerate(partidos, start=1):
+        conexion.execute(
+            """
+            INSERT INTO partido (id, temporada_id, fecha, equipo_local_id, equipo_visitante_id,
+                                 goles_local, goles_visitante)
+            VALUES (?, 1, '2020-09-01T15:00:00', ?, ?, ?, ?)
+            """,
+            (partido_id, local, visitante, gl, gv),
+        )
+        for condicion, equipo_id, goles, recibidos in (("h", local, gl, gv), ("a", visitante, gv, gl)):
+            puntos = 3 if goles > recibidos else 1 if goles == recibidos else 0
+            resultado = "w" if goles > recibidos else "d" if goles == recibidos else "l"
+            conexion.execute(
+                """
+                INSERT INTO equipo_partido
+                    (partido_id, equipo_id, condicion, xg, xga, xpts, puntos, resultado,
+                     goles, goles_recibidos)
+                VALUES (?, ?, ?, 1.0, 1.0, 1.0, ?, ?, ?, ?)
+                """,
+                (partido_id, equipo_id, condicion, puntos, resultado, goles, recibidos),
+            )
+    conexion.commit()
+    try:
+        return ligas.tabla_posiciones_vs_xpts(conexion, codigo_liga, 2020)
+    finally:
+        conexion.close()
+
+
+def test_empate_en_puntos_se_resuelve_por_diferencia_de_gol_y_nunca_repite_posicion(tmp_path: Path) -> None:
+    # A (1-0 y empate contra C) y B (4-0 y empate contra C) suman 4 puntos cada uno;
+    # B tiene mejor diferencia de gol (+4 vs. +1).
+    partidos = [(1, 3, 1, 0), (2, 3, 4, 0), (3, 1, 0, 0), (3, 2, 0, 0)]
+    df = _tabla_con_empate(tmp_path, "EPL", partidos)
+    puntos = dict(zip(df["equipo"], df["puntos"]))
+    assert puntos["A"] == puntos["B"]  # hay empate en puntos
+    assert sorted(df["posicion_real"]) == [1, 2, 3]  # posiciones únicas
+    posiciones = dict(zip(df["equipo"], df["posicion_real"]))
+    assert posiciones["B"] < posiciones["A"]  # B tiene mejor diferencia de gol (+4 vs +1)
+
+
+def test_desempate_por_enfrentamiento_directo_en_la_liga_y_serie_a(tmp_path: Path) -> None:
+    # A y B empatan en puntos; B tiene mejor diferencia de gol general,
+    # pero A le ganó el cruce directo: en La Liga manda el cruce directo.
+    partidos = [
+        (1, 2, 1, 0),  # A le gana a B
+        (2, 1, 0, 0),  # empatan la vuelta -> mini-tabla: A 4 pts, B 1
+        (2, 3, 6, 0),  # B golea a C (B: gran diferencia de gol)
+        (3, 1, 0, 0),
+        (3, 2, 0, 0),
+    ]
+    en_epl = _tabla_con_empate(tmp_path, "EPL", partidos)
+    en_la_liga = _tabla_con_empate(tmp_path, "La_liga", partidos)
+
+    puntos = dict(zip(en_la_liga["equipo"], en_la_liga["puntos"]))
+    assert puntos["A"] == puntos["B"]
+
+    pos_epl = dict(zip(en_epl["equipo"], en_epl["posicion_real"]))
+    pos_liga = dict(zip(en_la_liga["equipo"], en_la_liga["posicion_real"]))
+    assert pos_epl["B"] < pos_epl["A"]      # EPL: diferencia de gol general
+    assert pos_liga["A"] < pos_liga["B"]    # La Liga: enfrentamiento directo
