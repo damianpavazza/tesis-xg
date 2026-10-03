@@ -345,21 +345,38 @@ def _vista_linea_tiempo(conexion: sqlite3.Connection, codigo_liga: str, temporad
     st.plotly_chart(fig, use_container_width=True)
 
 
+VISTAS = ["Liga", "Equipo", "Jugador", "Partido", "Línea de tiempo"]
+# Equipo muestra el histórico de todas las temporadas: elegir una no tiene efecto.
+VISTAS_CON_TEMPORADA = {"Liga", "Jugador", "Partido", "Línea de tiempo"}
+
+
 def main() -> None:
     conexion = _conexion()
 
     st.sidebar.title("tesis-xg")
-    ligas_df = _ligas_disponibles(conexion)
-    codigo_liga = st.sidebar.selectbox(
-        "Liga", ligas_df["codigo"],
-        format_func=lambda c: ligas_df.set_index("codigo").loc[c, "nombre"],
-    )
-    temporadas = _temporadas_disponibles(conexion, codigo_liga)
-    temporada = st.sidebar.selectbox(
-        "Temporada", temporadas, index=len(temporadas) - 1, format_func=etiqueta_temporada
-    )
+    # El contenedor se crea antes del radio para que los filtros queden
+    # arriba, pero se completa después: los filtros dependen de la vista.
+    filtros = st.sidebar.container()
+    vista = st.sidebar.radio("Vista", VISTAS)
 
-    vista = st.sidebar.radio("Vista", ["Liga", "Equipo", "Jugador", "Partido", "Línea de tiempo"])
+    with filtros:
+        ligas_df = _ligas_disponibles(conexion)
+        codigo_liga = st.selectbox(
+            "Liga", ligas_df["codigo"],
+            format_func=lambda c: ligas_df.set_index("codigo").loc[c, "nombre"],
+        )
+
+        temporada = None
+        if vista in VISTAS_CON_TEMPORADA:
+            temporadas = _temporadas_disponibles(conexion, codigo_liga)
+            # Streamlit descarta el valor de un widget que no se dibuja en una
+            # corrida (p. ej. al pasar por Equipo): se recuerda aparte.
+            guardada = st.session_state.get("temporada_elegida")
+            indice = temporadas.index(guardada) if guardada in temporadas else len(temporadas) - 1
+            temporada = st.selectbox(
+                "Temporada", temporadas, index=indice, format_func=etiqueta_temporada
+            )
+            st.session_state["temporada_elegida"] = temporada
 
     if vista == "Liga":
         _vista_liga(conexion, codigo_liga, temporada)
