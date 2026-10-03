@@ -203,7 +203,7 @@ COLUMNAS_TABLA_LIGA = {
     "g": "G", "ga": "GA", "dg": "DG", "puntos": "Pts",
     "xg": "xG", "dif_xg": "Δ xG", "xga": "xGA", "dif_xga": "Δ xGA",
     "xpts": "xPTS", "dif_xpts": "Δ xPTS",
-    "posicion_xpts": "Pos xPTS", "diferencia_posicion": "Dif. pos",
+    "diferencia_posicion": "Dif. pos",
 }
 
 
@@ -218,7 +218,9 @@ def _color_diferencia(valor: float, positivo_es_bueno: bool) -> str:
 def _tabla_liga_con_estilo(df: pd.DataFrame):
     """Las columnas Δ siguen la convención de Understat (esperado − real):
     en xG y xPTS un valor negativo es sobreperformance; en xGA, positivo."""
-    tabla = df.rename(columns=COLUMNAS_TABLA_LIGA)
+    # posicion_xpts se calcula igual (la usa el gráfico de abajo) pero no se
+    # muestra: alcanza con ordenar la tabla por la columna xPTS.
+    tabla = df.drop(columns=["posicion_xpts"]).rename(columns=COLUMNAS_TABLA_LIGA)
     return (
         tabla.style
         .map(lambda v: _color_diferencia(v, positivo_es_bueno=False), subset=["Δ xG", "Δ xPTS"])
