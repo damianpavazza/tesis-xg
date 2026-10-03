@@ -85,20 +85,16 @@ def _partidos_de_temporada(_conexion: sqlite3.Connection, codigo_liga: str, temp
 
 
 @st.cache_data
-def _jugadores_de_temporada(_conexion: sqlite3.Connection, codigo_liga: str, temporada: int) -> pd.DataFrame:
-    return pd.read_sql_query(
-        """
-        SELECT DISTINCT jt.jugador_id, j.nombre
-        FROM jugador_temporada jt
-        JOIN jugador j ON j.id = jt.jugador_id
-        JOIN temporada t ON t.id = jt.temporada_id
-        JOIN liga l ON l.id = t.liga_id
-        WHERE l.codigo = :codigo_liga AND t.anio_inicio = :temporada
-        ORDER BY j.nombre
-        """,
-        _conexion,
-        params={"codigo_liga": codigo_liga, "temporada": temporada},
-    )
+def _todas_las_temporadas(_conexion: sqlite3.Connection) -> list[int]:
+    df = pd.read_sql_query("SELECT DISTINCT anio_inicio FROM temporada ORDER BY anio_inicio", _conexion)
+    return df["anio_inicio"].tolist()
+
+
+@st.cache_data
+def _buscar_jugadores(
+    _conexion: sqlite3.Connection, codigo_liga: str | None, temporada: int | None
+) -> pd.DataFrame:
+    return jugadores.buscar_jugadores(_conexion, codigo_liga, temporada)
 
 
 @st.cache_data
@@ -341,28 +337,71 @@ def _vista_equipo(conexion: sqlite3.Connection, codigo_liga: str) -> None:
     _mostrar_tabla(df, COLUMNAS_EVOLUCION_EQUIPO)
 
 
-def _vista_jugador(conexion: sqlite3.Connection, codigo_liga: str, temporada: int) -> None:
-    jugadores_df = _jugadores_de_temporada(conexion, codigo_liga, temporada)
-    if jugadores_df.empty:
-        st.info("Sin jugadores para esta liga/temporada.")
+def _etiqueta_jugador(fila) -> str:
+    """Nombre + último equipo + años de carrera: distingue a los homónimos y
+    permite buscar también escribiendo el nombre de un equipo."""
+    carrera = f"{etiqueta_temporada(fila.desde)}–{etiqueta_temporada(fila.hasta)}"
+    return f"{fila.nombre} — {fila.equipo} ({carrera})"
+
+
+def _vista_jugador(conexion: sqlite3.Connection) -> None:
+    # Los filtros solo acotan a quién se puede buscar; lo que se muestra del
+    # jugador (historial y mapa) no depende de ellos.
+    with st.expander("Filtrar la búsqueda por liga y temporada (opcional)"):
+        columna_liga, columna_temporada = st.columns(2)
+        nombres_liga = _ligas_disponibles(conexion).set_index("codigo")["nombre"].to_dict()
+        filtro_liga = columna_liga.selectbox(
+            "Liga", [None, *nombres_liga],
+            format_func=lambda c: "Todas" if c is None else nombres_liga[c],
+        )
+        filtro_temporada = columna_temporada.selectbox(
+            "Temporada", [None, *_todas_las_temporadas(conexion)],
+            format_func=lambda t: "Todas" if t is None else etiqueta_temporada(t),
+        )
+
+    candidatos = _buscar_jugadores(conexion, filtro_liga, filtro_temporada)
+    if candidatos.empty:
+        st.info("Ningún jugador coincide con esos filtros.")
         return
-    nombre = st.selectbox("Jugador", jugadores_df["nombre"])
-    jugador_id = int(jugadores_df.set_index("nombre").loc[nombre, "jugador_id"])
+
+    etiquetas = {int(fila.jugador_id): _etiqueta_jugador(fila) for fila in candidatos.itertuples()}
+    ids = list(etiquetas)
+    # Streamlit descarta el valor de un widget que no se dibuja en una corrida
+    # (p. ej. al pasar por otra vista): el jugador elegido se recuerda aparte.
+    guardado = st.session_state.get("jugador_elegido")
+    jugador_id = st.selectbox(
+        "Jugador", ids, index=ids.index(guardado) if guardado in ids else None,
+        format_func=etiquetas.get, placeholder="Escribí el nombre del jugador (o de su equipo)",
+    )
+    st.session_state["jugador_elegido"] = jugador_id
+    if jugador_id is None:
+        st.info("Buscá un jugador por nombre para ver su historial.")
+        return
+    nombre = candidatos.set_index("jugador_id").loc[jugador_id, "nombre"]
 
     st.header(f"Goles contra xG por temporada — {nombre}")
     evolucion = _evolucion_jugador(conexion, jugador_id)
+    temporadas_jugadas = evolucion["temporada"].tolist()
     evolucion = evolucion.assign(temporada=evolucion["temporada"].map(etiqueta_temporada))
     evolucion = evolucion.rename(columns={"goles": "Goles", "xg_understat": "xG"})
     fig = px.bar(
         evolucion, x="temporada", y=["Goles", "xG"], barmode="group",
-        title="Goles vs. xG por temporada",
+        title="Goles vs. xG por temporada (historial completo)",
         labels={"temporada": "Temporada", "value": "Goles / xG", "variable": "Serie"},
     )
     fig.update_layout(yaxis_hoverformat=".2f", legend_title_text="")
     st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader(f"Mapa de disparos — {etiqueta_temporada(temporada)}")
-    disparos = _disparos_de_jugador(conexion, jugador_id, temporada)
+    st.subheader("Mapa de disparos")
+    temporada_mapa = st.selectbox(
+        "Disparos de", [None, *temporadas_jugadas],
+        format_func=lambda t: "Todas las temporadas" if t is None else etiqueta_temporada(t),
+    )
+    disparos = _disparos_de_jugador(conexion, jugador_id, temporada_mapa)
+    st.caption(
+        f"{len(disparos)} disparos · {int(disparos['es_gol'].sum())} goles · "
+        f"xG {disparos['xg_understat'].sum():.2f}"
+    )
     fig_cancha = _figura_cancha()
     _agregar_disparos_a_cancha(fig_cancha, disparos, nombre, "dodgerblue")
     st.plotly_chart(fig_cancha, use_container_width=True)
@@ -418,8 +457,10 @@ def _vista_linea_tiempo(conexion: sqlite3.Connection, codigo_liga: str, temporad
 
 
 VISTAS = ["Liga", "Equipo", "Jugador", "Partido", "Línea de tiempo"]
-# Equipo muestra el histórico de todas las temporadas: elegir una no tiene efecto.
-VISTAS_CON_TEMPORADA = {"Liga", "Jugador", "Partido", "Línea de tiempo"}
+# Filtros de la barra lateral que usa cada vista. Equipo es un histórico de todas las
+# temporadas, y Jugador tiene su propio buscador: ninguno de los dos filtra por temporada.
+VISTAS_CON_LIGA = {"Liga", "Equipo", "Partido", "Línea de tiempo"}
+VISTAS_CON_TEMPORADA = {"Liga", "Partido", "Línea de tiempo"}
 
 
 def main() -> None:
@@ -431,18 +472,22 @@ def main() -> None:
     filtros = st.sidebar.container()
     vista = st.sidebar.radio("Vista", VISTAS)
 
+    codigo_liga = temporada = None
     with filtros:
-        ligas_df = _ligas_disponibles(conexion)
-        codigo_liga = st.selectbox(
-            "Liga", ligas_df["codigo"],
-            format_func=lambda c: ligas_df.set_index("codigo").loc[c, "nombre"],
-        )
+        # Streamlit descarta el valor de un widget que no se dibuja en una
+        # corrida (p. ej. al pasar por Jugador): se recuerda aparte.
+        if vista in VISTAS_CON_LIGA:
+            ligas_df = _ligas_disponibles(conexion)
+            codigos = ligas_df["codigo"].tolist()
+            guardada = st.session_state.get("liga_elegida")
+            codigo_liga = st.selectbox(
+                "Liga", codigos, index=codigos.index(guardada) if guardada in codigos else 0,
+                format_func=lambda c: ligas_df.set_index("codigo").loc[c, "nombre"],
+            )
+            st.session_state["liga_elegida"] = codigo_liga
 
-        temporada = None
         if vista in VISTAS_CON_TEMPORADA:
             temporadas = _temporadas_disponibles(conexion, codigo_liga)
-            # Streamlit descarta el valor de un widget que no se dibuja en una
-            # corrida (p. ej. al pasar por Equipo): se recuerda aparte.
             guardada = st.session_state.get("temporada_elegida")
             indice = temporadas.index(guardada) if guardada in temporadas else len(temporadas) - 1
             temporada = st.selectbox(
@@ -455,7 +500,7 @@ def main() -> None:
     elif vista == "Equipo":
         _vista_equipo(conexion, codigo_liga)
     elif vista == "Jugador":
-        _vista_jugador(conexion, codigo_liga, temporada)
+        _vista_jugador(conexion)
     elif vista == "Partido":
         _vista_partido(conexion, codigo_liga, temporada)
     elif vista == "Línea de tiempo":

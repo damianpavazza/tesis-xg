@@ -84,3 +84,48 @@ def disparos_de_jugador(
         ORDER BY p.fecha, d.minuto
     """
     return pd.read_sql_query(consulta, conexion, params=parametros)
+
+
+def buscar_jugadores(
+    conexion: sqlite3.Connection, codigo_liga: str | None = None, temporada: int | None = None
+) -> pd.DataFrame:
+    """Jugadores para el buscador de la vista "Jugador" del dashboard.
+
+    Sin parámetros devuelve todos. `codigo_liga` y `temporada` solo
+    acotan *quién aparece* en la búsqueda (jugadores que jugaron en esa
+    liga y/o temporada): el rango `desde`-`hasta` y el `equipo` siempre
+    corresponden a toda su carrera, no al filtro. `equipo` es el de su
+    última temporada, para distinguir homónimos.
+    """
+    consulta = """
+        WITH rangos AS (
+            SELECT jt.jugador_id, MIN(t.anio_inicio) AS desde, MAX(t.anio_inicio) AS hasta
+            FROM jugador_temporada jt
+            JOIN temporada t ON t.id = jt.temporada_id
+            GROUP BY jt.jugador_id
+        ),
+        ultimo AS (
+            SELECT jt.jugador_id, jt.equipo,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY jt.jugador_id ORDER BY t.anio_inicio DESC
+                   ) AS orden
+            FROM jugador_temporada jt
+            JOIN temporada t ON t.id = jt.temporada_id
+        )
+        SELECT j.id AS jugador_id, j.nombre, r.desde, r.hasta, u.equipo
+        FROM jugador j
+        JOIN rangos r ON r.jugador_id = j.id
+        JOIN ultimo u ON u.jugador_id = j.id AND u.orden = 1
+        WHERE j.id IN (
+            SELECT jt.jugador_id
+            FROM jugador_temporada jt
+            JOIN temporada t ON t.id = jt.temporada_id
+            JOIN liga l ON l.id = t.liga_id
+            WHERE (:codigo_liga IS NULL OR l.codigo = :codigo_liga)
+              AND (:temporada IS NULL OR t.anio_inicio = :temporada)
+        )
+        ORDER BY j.nombre, j.id
+    """
+    return pd.read_sql_query(
+        consulta, conexion, params={"codigo_liga": codigo_liga, "temporada": temporada}
+    )

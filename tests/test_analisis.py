@@ -264,3 +264,33 @@ def test_desempate_por_enfrentamiento_directo_en_la_liga_y_serie_a(tmp_path: Pat
     pos_liga = dict(zip(en_la_liga["equipo"], en_la_liga["posicion_real"]))
     assert pos_epl["B"] < pos_epl["A"]      # EPL: diferencia de gol general
     assert pos_liga["A"] < pos_liga["B"]    # La Liga: enfrentamiento directo
+
+
+def test_buscar_jugadores_el_filtro_acota_quien_aparece_pero_no_su_trayectoria(conexion) -> None:
+    _poblar_jugadores_temporada(conexion)
+    # El jugador 200 sigue una temporada más (2021) en otro equipo.
+    conexion.execute("INSERT INTO temporada (liga_id, anio_inicio) VALUES (1, 2021)")
+    conexion.execute(
+        """
+        INSERT INTO jugador_temporada
+            (jugador_id, temporada_id, equipo, posicion, partidos, minutos, goles, goles_np,
+             asistencias, xg, xg_np, xa, disparos, pases_clave)
+        VALUES (200, 2, 'B', 'F', 10, 900, 5, 5, 1, 4.0, 4.0, 0.5, 20, 5)
+        """
+    )
+    conexion.commit()
+
+    todos = jugadores.buscar_jugadores(conexion)
+    titular = todos[todos["jugador_id"] == 200].iloc[0]
+    assert (titular["desde"], titular["hasta"], titular["equipo"]) == (2020, 2021, "B")  # equipo más reciente
+
+    # Con filtro de temporada 2020 aparecen 200 y 300 ...
+    en_2020 = jugadores.buscar_jugadores(conexion, temporada=2020)
+    assert set(en_2020["jugador_id"]) == {200, 300}
+    # ... pero la trayectoria de 200 sigue siendo la completa (no se recorta a 2020).
+    assert en_2020[en_2020["jugador_id"] == 200].iloc[0]["hasta"] == 2021
+
+    # Solo 200 jugó en 2021; y una liga o temporada inexistente no devuelve a nadie.
+    assert set(jugadores.buscar_jugadores(conexion, temporada=2021)["jugador_id"]) == {200}
+    assert set(jugadores.buscar_jugadores(conexion, codigo_liga="EPL")["jugador_id"]) == {200, 300}
+    assert jugadores.buscar_jugadores(conexion, codigo_liga="XXX").empty
