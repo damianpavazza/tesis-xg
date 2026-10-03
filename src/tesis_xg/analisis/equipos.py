@@ -56,14 +56,18 @@ def porcentaje_victorias_segun_xg_y_ppda(
 
 
 def disparos_de_partido(conexion: sqlite3.Connection, partido_id: int) -> pd.DataFrame:
-    """Disparos de un partido con su ubicación, para el mapa de disparos
-    del dashboard (sección 7 / 8)."""
+    """Disparos de un partido con su ubicación y el detalle que muestra el
+    tooltip del mapa de disparos (sección 7 / 8): situación, tipo de disparo
+    y quién dio el pase."""
     consulta = """
         SELECT d.id, d.equipo_id, e.nombre AS equipo, d.jugador_id, j.nombre AS jugador,
-               d.minuto, d.x, d.y, d.resultado, d.es_gol, d.xg_understat, d.xg_propio
+               d.minuto, d.x, d.y, d.resultado, d.es_gol,
+               d.situacion, d.tipo_disparo, ja.nombre AS asistente,
+               d.xg_understat, d.xg_propio
         FROM disparo d
         JOIN equipo e ON e.id = d.equipo_id
         LEFT JOIN jugador j ON j.id = d.jugador_id
+        LEFT JOIN jugador ja ON ja.id = d.jugador_asistencia_id
         WHERE d.partido_id = :partido_id
         ORDER BY d.minuto
     """

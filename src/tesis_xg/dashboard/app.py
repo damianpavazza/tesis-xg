@@ -161,6 +161,7 @@ COLUMNAS_DISPAROS = {
     "id": "ID", "equipo_id": "ID equipo", "equipo": "Equipo",
     "jugador_id": "ID jugador", "jugador": "Jugador", "minuto": "Min",
     "x": "X", "y": "Y", "resultado": "Resultado", "es_gol": "Gol",
+    "situacion": "Situación", "tipo_disparo": "Tipo de disparo", "asistente": "Asistencia",
     "xg_understat": "xG Understat", "xg_propio": "xG propio",
 }
 
@@ -220,20 +221,22 @@ def _figura_cancha(ambos_arcos: bool = False) -> go.Figure:
 
 
 def _textos_hover(disparos: pd.DataFrame) -> list[str]:
-    """Tooltip de cada disparo. Si el DataFrame trae el detalle del partido (los
-    disparos de un jugador) se muestra completo, como en Understat."""
-    if "situacion" not in disparos.columns:
-        return [
-            ("GOL — " if gol else "") + f"xG {xg:.2f}"
-            for gol, xg in zip(disparos["es_gol"], disparos["xg_understat"])
-        ]
+    """Tooltip de cada disparo, con el detalle como en Understat. En la vista
+    Jugador el encabezado es el partido; en un partido, el minuto y el
+    jugador."""
     textos = []
     for f in disparos.itertuples():
+        if hasattr(f, "local"):
+            encabezado = (
+                f"<b>{f.local} {f.goles_local:.0f} - {f.goles_visitante:.0f} {f.visitante}</b>"
+                f"<br>{f.fecha[:10]}<br>Minuto: {f.minuto}"
+            )
+        else:
+            jugador = f.jugador if isinstance(f.jugador, str) else "—"
+            encabezado = f"<b>{f.minuto}' {jugador}</b>"
         asistente = f.asistente if isinstance(f.asistente, str) else "—"
         textos.append(
-            f"<b>{f.local} {f.goles_local:.0f} - {f.goles_visitante:.0f} {f.visitante}</b>"
-            f"<br>{f.fecha[:10]}"
-            f"<br>Minuto: {f.minuto}"
+            f"{encabezado}"
             f"<br>Situación: {ETIQUETAS_SITUACION.get(f.situacion, f.situacion)}"
             f"<br>Asistencia: {asistente}"
             f"<br>Tipo de disparo: {ETIQUETAS_TIPO_DISPARO.get(f.tipo_disparo, f.tipo_disparo)}"
@@ -621,6 +624,8 @@ def _pestana_mapa_disparos(conexion: sqlite3.Connection, partido_id: int, estadi
     tabla = disparos.assign(
         es_gol=disparos["es_gol"].map({1: "Sí", 0: "No"}),
         resultado=disparos["resultado"].map(lambda r: ETIQUETAS_RESULTADO.get(r, r)),
+        situacion=disparos["situacion"].map(lambda r: ETIQUETAS_SITUACION.get(r, r)),
+        tipo_disparo=disparos["tipo_disparo"].map(lambda r: ETIQUETAS_TIPO_DISPARO.get(r, r)),
     )
     _mostrar_tabla(tabla, COLUMNAS_DISPAROS)
 

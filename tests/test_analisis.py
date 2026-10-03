@@ -143,6 +143,10 @@ def test_disparos_y_linea_tiempo_de_partido(conexion) -> None:
     disparos = equipos.disparos_de_partido(conexion, partido_id=1)
     assert len(disparos) == 3
     assert list(disparos["minuto"]) == [10, 25, 40]  # ordenado por minuto
+    # detalle para el tooltip del mapa
+    assert list(disparos["situacion"]) == ["OpenPlay"] * 3
+    assert list(disparos["tipo_disparo"]) == ["RightFoot", "LeftFoot", "RightFoot"]
+    assert disparos["asistente"].isna().all()  # el fixture no tiene asistencias
 
     linea = equipos.linea_tiempo_xg_partido(conexion, partido_id=1)
     equipo_1 = linea[linea["equipo_id"] == 1].sort_values("minuto")
