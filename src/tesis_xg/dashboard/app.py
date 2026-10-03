@@ -13,7 +13,13 @@ import streamlit as st
 
 from tesis_xg.almacenamiento import base
 from tesis_xg.analisis import equipos, jugadores, ligas
-from tesis_xg.analisis.formato import etiqueta_temporada
+from tesis_xg.analisis.formato import (
+    ETIQUETAS_RESULTADO,
+    ETIQUETAS_SITUACION,
+    ETIQUETAS_TIPO_DISPARO,
+    ETIQUETAS_ZONA,
+    etiqueta_temporada,
+)
 from tesis_xg.config import cargar_config
 
 LARGO_CANCHA_M = 105.0
@@ -113,8 +119,15 @@ def _goles_vs_xg_jugadores(_conexion: sqlite3.Connection, temporada: int, minuto
 
 
 @st.cache_data
-def _evolucion_jugador(_conexion: sqlite3.Connection, jugador_id: int) -> pd.DataFrame:
-    return jugadores.evolucion_jugador(_conexion, jugador_id)
+def _resumen_jugador(_conexion: sqlite3.Connection, jugador_id: int) -> pd.DataFrame:
+    return jugadores.resumen_por_temporada(_conexion, jugador_id)
+
+
+@st.cache_data
+def _desglose_jugador(
+    _conexion: sqlite3.Connection, jugador_id: int, categoria: str, temporada: int | None
+) -> pd.DataFrame:
+    return jugadores.desglose_de_disparos(_conexion, jugador_id, categoria, temporada)
 
 
 @st.cache_data
@@ -187,10 +200,35 @@ def _figura_cancha() -> go.Figure:
     return fig
 
 
+def _textos_hover(disparos: pd.DataFrame) -> list[str]:
+    """Tooltip de cada disparo. Si el DataFrame trae el detalle del partido (los
+    disparos de un jugador) se muestra completo, como en Understat."""
+    if "situacion" not in disparos.columns:
+        return [
+            ("GOL — " if gol else "") + f"xG {xg:.2f}"
+            for gol, xg in zip(disparos["es_gol"], disparos["xg_understat"])
+        ]
+    textos = []
+    for f in disparos.itertuples():
+        asistente = f.asistente if isinstance(f.asistente, str) else "—"
+        textos.append(
+            f"<b>{f.local} {f.goles_local:.0f} - {f.goles_visitante:.0f} {f.visitante}</b>"
+            f"<br>{f.fecha[:10]}"
+            f"<br>Minuto: {f.minuto}"
+            f"<br>Situación: {ETIQUETAS_SITUACION.get(f.situacion, f.situacion)}"
+            f"<br>Asistencia: {asistente}"
+            f"<br>Tipo de disparo: {ETIQUETAS_TIPO_DISPARO.get(f.tipo_disparo, f.tipo_disparo)}"
+            f"<br>Resultado: {ETIQUETAS_RESULTADO.get(f.resultado, f.resultado)}"
+            f"<br>xG: {f.xg_understat:.2f}"
+        )
+    return textos
+
+
 def _agregar_disparos_a_cancha(fig: go.Figure, disparos: pd.DataFrame, nombre: str, color: str) -> None:
     if disparos.empty:
         return
     disparos = disparos.copy()
+    disparos["texto"] = _textos_hover(disparos)
     disparos["x_m"] = disparos["x"] * LARGO_CANCHA_M
     disparos["y_m"] = disparos["y"] * ANCHO_CANCHA_M
     disparos["tamano"] = 8 + disparos["xg_understat"] * 45
@@ -202,7 +240,7 @@ def _agregar_disparos_a_cancha(fig: go.Figure, disparos: pd.DataFrame, nombre: s
         go.Scatter(
             x=no_gol["x_m"], y=no_gol["y_m"], mode="markers", name=f"{nombre} — disparo",
             marker=dict(size=no_gol["tamano"], color=color, opacity=0.55, line=dict(width=1, color="white")),
-            text=[f"xG {v:.2f}" for v in no_gol["xg_understat"]],
+            text=no_gol["texto"],
             hoverinfo="text",
         )
     )
@@ -210,7 +248,7 @@ def _agregar_disparos_a_cancha(fig: go.Figure, disparos: pd.DataFrame, nombre: s
         go.Scatter(
             x=gol["x_m"], y=gol["y_m"], mode="markers", name=f"{nombre} — gol",
             marker=dict(size=gol["tamano"], color="gold", symbol="star", line=dict(width=1.5, color="black")),
-            text=[f"GOL — xG {v:.2f}" for v in gol["xg_understat"]],
+            text=gol["texto"],
             hoverinfo="text",
         )
     )
@@ -227,7 +265,7 @@ COLUMNAS_TABLA_LIGA = {
 
 def _color_diferencia(valor: float, positivo_es_bueno: bool) -> str:
     """Verde si el equipo rindió por encima de lo esperado, rojo si por debajo."""
-    if valor == 0:
+    if pd.isna(valor) or valor == 0:
         return ""
     bueno = (valor > 0) == positivo_es_bueno
     return "color: #2ecc71; font-weight: 600" if bueno else "color: #e74c3c; font-weight: 600"
@@ -337,6 +375,72 @@ def _vista_equipo(conexion: sqlite3.Connection, codigo_liga: str) -> None:
     _mostrar_tabla(df, COLUMNAS_EVOLUCION_EQUIPO)
 
 
+REFERENCIAS_TABLAS_JUGADOR = (
+    "PJ = partidos jugados · Disp = disparos · PC = pases clave (pases que terminan en un disparo) · "
+    "A = asistencias (pases clave que terminan en gol) · xA = xG de los disparos asistidos · "
+    "Δ = esperado − real (convención de Understat): verde si rindió por encima de lo esperado, rojo si por debajo."
+)
+
+COLUMNAS_RESUMEN_JUGADOR = {
+    "temporada": "Temporada", "equipo": "Equipo", "pj": "PJ", "minutos": "Min", "g": "G", "a": "A",
+    "sh90": "Disp/90", "kp90": "PC/90", "xg": "xG", "dif_xg": "Δ xG", "xa": "xA", "dif_xa": "Δ xA",
+    "xg90": "xG/90", "xa90": "xA/90",
+}
+
+
+def _estilo_tabla_jugador(tabla: pd.DataFrame, columna_total: str, enteras: list[str], decimales: list[str]):
+    """Δ en verde/rojo, fila Total en negrita y formatos numéricos. Las
+    columnas Δ llevan signo (+/−) y las enteras no muestran decimales."""
+    columnas_delta = [c for c in tabla.columns if c.startswith("Δ")]
+    formatos = {c: "{:.0f}" for c in enteras}
+    formatos.update({c: "{:.2f}" for c in decimales})
+    formatos.update({c: "{:+.2f}" for c in columnas_delta})
+    return (
+        tabla.style
+        .map(lambda v: _color_diferencia(v, positivo_es_bueno=False), subset=columnas_delta)
+        .apply(lambda fila: ["font-weight: 700" if fila[columna_total] == "Total" else "" for _ in fila], axis=1)
+        .format(formatos, na_rep="–")
+    )
+
+
+def _tabla_resumen_jugador(resumen: pd.DataFrame):
+    tabla = resumen.assign(
+        temporada=resumen["temporada"].map(lambda t: t if t == "Total" else etiqueta_temporada(int(t)))
+    )[list(COLUMNAS_RESUMEN_JUGADOR)].rename(columns=COLUMNAS_RESUMEN_JUGADOR)
+    return _estilo_tabla_jugador(
+        tabla, "Temporada",
+        enteras=["PJ", "Min", "G", "A"],
+        decimales=["Disp/90", "PC/90", "xG", "xA", "xG/90", "xA/90"],
+    )
+
+
+def _mostrar_desglose(
+    conexion: sqlite3.Connection, jugador_id: int, categoria: str, temporada: int | None,
+    etiquetas: dict[str, str], nombre_categoria: str,
+) -> None:
+    desglose = _desglose_jugador(conexion, jugador_id, categoria, temporada)
+    if desglose.empty:
+        st.info("Sin disparos ni pases clave en esta selección.")
+        return
+
+    columnas = {
+        "categoria": nombre_categoria, "sh": "Disp", "g": "G", "kp": "PC", "a": "A",
+        "xg": "xG", "dif_xg": "Δ xG", "xa": "xA", "dif_xa": "Δ xA",
+    }
+    if categoria == "situacion":  # igual que Understat: xG/90 y xA/90 solo en esta pestaña
+        columnas.update({"xg90": "xG/90", "xa90": "xA/90"})
+    columnas.update({"xg_por_sh": "xG/Disp", "xa_por_kp": "xA/PC"})
+
+    tabla = desglose.assign(categoria=desglose["categoria"].map(lambda c: etiquetas.get(c, c)))
+    tabla = tabla[list(columnas)].rename(columns=columnas)
+    estilo = _estilo_tabla_jugador(
+        tabla, nombre_categoria,
+        enteras=["Disp", "G", "PC", "A"],
+        decimales=[c for c in ("xG", "xA", "xG/90", "xA/90", "xG/Disp", "xA/PC") if c in tabla.columns],
+    )
+    st.dataframe(estilo, use_container_width=True, hide_index=True, height=(len(tabla) + 1) * 35 + 3)
+
+
 def _etiqueta_jugador(fila) -> str:
     """Nombre + último equipo + años de carrera: distingue a los homónimos y
     permite buscar también escribiendo el nombre de un equipo."""
@@ -379,28 +483,64 @@ def _vista_jugador(conexion: sqlite3.Connection) -> None:
         return
     nombre = candidatos.set_index("jugador_id").loc[jugador_id, "nombre"]
 
+    resumen = _resumen_jugador(conexion, jugador_id)
+    por_temporada = resumen[resumen["temporada"] != "Total"]
+    temporadas_jugadas = sorted({int(t) for t in por_temporada["temporada"]})
+
     st.header(f"Goles contra xG por temporada — {nombre}")
-    evolucion = _evolucion_jugador(conexion, jugador_id)
-    temporadas_jugadas = evolucion["temporada"].tolist()
-    evolucion = evolucion.assign(temporada=evolucion["temporada"].map(etiqueta_temporada))
-    evolucion = evolucion.rename(columns={"goles": "Goles", "xg_understat": "xG"})
+    historial = por_temporada.assign(temporada=por_temporada["temporada"].astype(int)).sort_values("temporada")
+    historial = historial.assign(temporada=historial["temporada"].map(etiqueta_temporada))
+    historial = historial.rename(columns={"g": "Goles", "xg": "xG"})
     fig = px.bar(
-        evolucion, x="temporada", y=["Goles", "xG"], barmode="group",
+        historial, x="temporada", y=["Goles", "xG"], barmode="group",
         title="Goles vs. xG por temporada (historial completo)",
         labels={"temporada": "Temporada", "value": "Goles / xG", "variable": "Serie"},
     )
     fig.update_layout(yaxis_hoverformat=".2f", legend_title_text="")
     st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("Mapa de disparos")
-    temporada_mapa = st.selectbox(
-        "Disparos de", [None, *temporadas_jugadas],
+    st.subheader("Resumen por temporada")
+    st.dataframe(
+        _tabla_resumen_jugador(resumen), use_container_width=True, hide_index=True,
+        height=(len(resumen) + 1) * 35 + 3,
+    )
+    st.caption(REFERENCIAS_TABLAS_JUGADOR)
+
+    st.subheader("Desglose de disparos")
+    temporada_tablas = st.selectbox(
+        "Temporada (tablas)", [None, *temporadas_jugadas],
         format_func=lambda t: "Todas las temporadas" if t is None else etiqueta_temporada(t),
     )
+    pestana_situacion, pestana_zonas, pestana_tipos = st.tabs(["Situación", "Zonas de tiro", "Tipos de disparo"])
+    with pestana_situacion:
+        _mostrar_desglose(conexion, jugador_id, "situacion", temporada_tablas, ETIQUETAS_SITUACION, "Situación")
+    with pestana_zonas:
+        _mostrar_desglose(conexion, jugador_id, "zona", temporada_tablas, ETIQUETAS_ZONA, "Zona de tiro")
+    with pestana_tipos:
+        _mostrar_desglose(
+            conexion, jugador_id, "tipo_disparo", temporada_tablas, ETIQUETAS_TIPO_DISPARO, "Tipo de disparo"
+        )
+    st.caption(REFERENCIAS_TABLAS_JUGADOR)
+
+    st.subheader("Mapa de disparos")
+    columna_temporada, columna_situacion, columna_resultado = st.columns(3)
+    temporada_mapa = columna_temporada.selectbox(
+        "Temporada (mapa)", [None, *temporadas_jugadas],
+        format_func=lambda t: "Todas las temporadas" if t is None else etiqueta_temporada(t),
+    )
+    situaciones = columna_situacion.multiselect(
+        "Situación", list(ETIQUETAS_SITUACION), default=list(ETIQUETAS_SITUACION),
+        format_func=ETIQUETAS_SITUACION.get,
+    )
+    resultados = columna_resultado.multiselect(
+        "Resultado", list(ETIQUETAS_RESULTADO), default=list(ETIQUETAS_RESULTADO),
+        format_func=ETIQUETAS_RESULTADO.get,
+    )
     disparos = _disparos_de_jugador(conexion, jugador_id, temporada_mapa)
+    disparos = disparos[disparos["situacion"].isin(situaciones) & disparos["resultado"].isin(resultados)]
     st.caption(
         f"{len(disparos)} disparos · {int(disparos['es_gol'].sum())} goles · "
-        f"xG {disparos['xg_understat'].sum():.2f}"
+        f"xG {disparos['xg_understat'].sum():.2f}. Pasá el mouse sobre un disparo para ver su detalle."
     )
     fig_cancha = _figura_cancha()
     _agregar_disparos_a_cancha(fig_cancha, disparos, nombre, "dodgerblue")
@@ -436,7 +576,10 @@ def _vista_partido(conexion: sqlite3.Connection, codigo_liga: str, temporada: in
     for (equipo_id, nombre_equipo), color in zip(equipos_partido, colores):
         _agregar_disparos_a_cancha(fig, disparos[disparos["equipo_id"] == equipo_id], nombre_equipo, color)
     st.plotly_chart(fig, use_container_width=True)
-    tabla = disparos.assign(es_gol=disparos["es_gol"].map({1: "Sí", 0: "No"}))
+    tabla = disparos.assign(
+        es_gol=disparos["es_gol"].map({1: "Sí", 0: "No"}),
+        resultado=disparos["resultado"].map(lambda r: ETIQUETAS_RESULTADO.get(r, r)),
+    )
     _mostrar_tabla(tabla, COLUMNAS_DISPAROS)
 
 

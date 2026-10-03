@@ -67,7 +67,9 @@ def disparos_de_jugador(
     conexion: sqlite3.Connection, jugador_id: int, temporada: int | None = None
 ) -> pd.DataFrame:
     """Disparos de un jugador (todas las temporadas, o una puntual), para
-    el mapa de disparos de la vista "Jugador" del dashboard."""
+    el mapa de disparos de la vista "Jugador" del dashboard. Incluye el
+    detalle que muestra el tooltip: partido, situación, tipo de disparo y
+    quién dio el pase."""
     condicion = ""
     parametros: dict[str, object] = {"jugador_id": jugador_id}
     if temporada is not None:
@@ -76,10 +78,16 @@ def disparos_de_jugador(
 
     consulta = f"""
         SELECT d.id, d.partido_id, d.minuto, d.x, d.y, d.resultado, d.es_gol,
-               d.xg_understat, d.xg_propio
+               d.situacion, d.tipo_disparo, d.xg_understat, d.xg_propio,
+               ja.nombre AS asistente,
+               p.fecha, eh.nombre AS local, ea.nombre AS visitante,
+               p.goles_local, p.goles_visitante
         FROM disparo d
         JOIN partido p ON p.id = d.partido_id
         JOIN temporada t ON t.id = p.temporada_id
+        JOIN equipo eh ON eh.id = p.equipo_local_id
+        JOIN equipo ea ON ea.id = p.equipo_visitante_id
+        LEFT JOIN jugador ja ON ja.id = d.jugador_asistencia_id
         WHERE d.jugador_id = :jugador_id {condicion}
         ORDER BY p.fecha, d.minuto
     """
@@ -129,3 +137,157 @@ def buscar_jugadores(
     return pd.read_sql_query(
         consulta, conexion, params={"codigo_liga": codigo_liga, "temporada": temporada}
     )
+
+
+# --- Resumen y desglose de un jugador (vista "Jugador" del dashboard) ---------
+
+# Límites de las zonas de tiro, sobre las coordenadas normalizadas (0-1) de
+# Understat, que siguen las proporciones de Opta (el punto de penal queda en
+# x=0.885) y no las medidas reglamentarias en metros. Se calibraron contra la
+# pestaña "Shot zones" de Understat: con estos valores y desigualdades
+# estrictas se reproducen exactamente sus conteos para Mohamed Salah
+# (270 fuera del área / 930 área grande / 96 área chica).
+_X_AREA_GRANDE = 0.83
+_Y_AREA_GRANDE = (0.211, 0.789)
+_X_AREA_CHICA = 0.942
+_Y_AREA_CHICA = (0.368, 0.632)
+
+CATEGORIAS_DESGLOSE = ("situacion", "tipo_disparo", "zona")
+
+
+def zona_de_tiro(x: pd.Series, y: pd.Series) -> pd.Series:
+    """Zona de cada disparo según sus coordenadas normalizadas (0-1, arco
+    atacado en x=1): `area_chica`, `area_grande` (sin el área chica) o
+    `fuera_del_area`."""
+    en_area_chica = (x > _X_AREA_CHICA) & (y > _Y_AREA_CHICA[0]) & (y < _Y_AREA_CHICA[1])
+    en_area_grande = (x > _X_AREA_GRANDE) & (y > _Y_AREA_GRANDE[0]) & (y < _Y_AREA_GRANDE[1])
+    zona = pd.Series("fuera_del_area", index=x.index)
+    zona[en_area_grande] = "area_grande"
+    zona[en_area_chica] = "area_chica"
+    return zona
+
+
+def _por_90(valor: pd.Series, minutos: pd.Series) -> pd.Series:
+    return (valor / minutos.where(minutos > 0) * 90)
+
+
+def resumen_por_temporada(conexion: sqlite3.Connection, jugador_id: int, con_total: bool = True) -> pd.DataFrame:
+    """Resumen de un jugador por temporada, al estilo de la pestaña "Season"
+    de Understat. Una fila por temporada y liga (si cambió de liga a mitad de
+    año, aparecen dos), de la más reciente a la más antigua, y al final una
+    fila `Total`. Las columnas `dif_*` siguen la convención de Understat
+    (esperado − real): negativo = rindió por encima de lo esperado."""
+    consulta = """
+        SELECT t.anio_inicio AS temporada, jt.equipo, jt.partidos AS pj, jt.minutos,
+               jt.goles AS g, jt.asistencias AS a, jt.disparos AS sh, jt.pases_clave AS kp,
+               jt.xg, jt.xa
+        FROM jugador_temporada jt
+        JOIN temporada t ON t.id = jt.temporada_id
+        WHERE jt.jugador_id = :jugador_id
+        ORDER BY t.anio_inicio DESC, jt.minutos DESC
+    """
+    df = pd.read_sql_query(consulta, conexion, params={"jugador_id": jugador_id})
+    if df.empty:
+        return df
+
+    if con_total:
+        total = {"temporada": "Total", "equipo": ""}
+        total.update(df[["pj", "minutos", "g", "a", "sh", "kp", "xg", "xa"]].sum().to_dict())
+        df = pd.concat([df, pd.DataFrame([total])], ignore_index=True)
+
+    df["sh90"] = _por_90(df["sh"], df["minutos"])
+    df["kp90"] = _por_90(df["kp"], df["minutos"])
+    df["xg90"] = _por_90(df["xg"], df["minutos"])
+    df["xa90"] = _por_90(df["xa"], df["minutos"])
+    df["dif_xg"] = df["xg"] - df["g"]
+    df["dif_xa"] = df["xa"] - df["a"]
+    return df
+
+
+def _rol_en_disparos(
+    conexion: sqlite3.Connection, jugador_id: int, columna_jugador: str, temporada: int | None
+) -> pd.DataFrame:
+    """Disparos en los que el jugador figura como `jugador_id` (ejecutante) o
+    como `jugador_asistencia_id` (autor del pase)."""
+    consulta = f"""
+        SELECT d.x, d.y, d.situacion, d.tipo_disparo, d.es_gol, d.xg_understat
+        FROM disparo d
+        JOIN partido p ON p.id = d.partido_id
+        JOIN temporada t ON t.id = p.temporada_id
+        WHERE d.{columna_jugador} = :jugador_id
+          AND (:temporada IS NULL OR t.anio_inicio = :temporada)
+    """
+    df = pd.read_sql_query(consulta, conexion, params={"jugador_id": jugador_id, "temporada": temporada})
+    df["zona"] = zona_de_tiro(df["x"], df["y"]) if not df.empty else pd.Series(dtype=object)
+    return df
+
+
+def _agrupar_por(df: pd.DataFrame, categoria: str, nombres: tuple[str, str, str]) -> pd.DataFrame:
+    cantidad, goles, xg = nombres
+    if df.empty:
+        return pd.DataFrame(columns=[cantidad, goles, xg])
+    agrupado = df.groupby(categoria).agg(
+        **{cantidad: ("es_gol", "size"), goles: ("es_gol", "sum"), xg: ("xg_understat", "sum")}
+    )
+    return agrupado
+
+
+def desglose_de_disparos(
+    conexion: sqlite3.Connection,
+    jugador_id: int,
+    categoria: str,
+    temporada: int | None = None,
+    con_total: bool = True,
+) -> pd.DataFrame:
+    """Desglose de los disparos de un jugador por `situacion`, `tipo_disparo` o
+    `zona` (pestañas "Situation", "Shot types" y "Shot zones" de Understat).
+
+    - `sh`, `g`, `xg`: disparos que tiró, goles y su xG.
+    - `kp`, `a`, `xa`: pases clave (pases que terminan en disparo de un
+      compañero), asistencias (los que terminan en gol) y el xG de esos
+      disparos. La categoría es la del disparo asistido.
+    - `xg90`/`xa90` usan los minutos de la temporada elegida (o todos).
+    - `dif_*` = esperado − real (convención de Understat).
+
+    Devuelve un DataFrame vacío si el jugador no tiene disparos ni pases
+    clave en esa selección.
+    """
+    if categoria not in CATEGORIAS_DESGLOSE:
+        raise ValueError(f"categoria debe ser una de {CATEGORIAS_DESGLOSE}, no {categoria!r}")
+
+    tiros = _agrupar_por(_rol_en_disparos(conexion, jugador_id, "jugador_id", temporada), categoria, ("sh", "g", "xg"))
+    pases = _agrupar_por(
+        _rol_en_disparos(conexion, jugador_id, "jugador_asistencia_id", temporada), categoria, ("kp", "a", "xa")
+    )
+    df = tiros.join(pases, how="outer").fillna(0)
+    if df.empty:
+        return df.reset_index().rename(columns={"index": "categoria"})
+
+    df = df.reset_index().rename(columns={categoria: "categoria"})
+    for columna in ("sh", "g", "kp", "a"):
+        df[columna] = df[columna].astype(int)
+    df = df.sort_values(["sh", "kp"], ascending=False).reset_index(drop=True)
+
+    if con_total:
+        total = {"categoria": "Total"}
+        total.update(df[["sh", "g", "kp", "a", "xg", "xa"]].sum().to_dict())
+        df = pd.concat([df, pd.DataFrame([total])], ignore_index=True)
+
+    (minutos,) = conexion.execute(
+        """
+        SELECT COALESCE(SUM(jt.minutos), 0)
+        FROM jugador_temporada jt JOIN temporada t ON t.id = jt.temporada_id
+        WHERE jt.jugador_id = :jugador_id AND (:temporada IS NULL OR t.anio_inicio = :temporada)
+        """,
+        {"jugador_id": jugador_id, "temporada": temporada},
+    ).fetchone()
+    minutos_serie = pd.Series(minutos, index=df.index, dtype=float)
+
+    df["dif_xg"] = df["xg"] - df["g"]
+    df["dif_xa"] = df["xa"] - df["a"]
+    df["xg90"] = _por_90(df["xg"], minutos_serie)
+    df["xa90"] = _por_90(df["xa"], minutos_serie)
+    # Sin disparos (o sin pases clave) el cociente queda en 0, como en Understat.
+    df["xg_por_sh"] = (df["xg"] / df["sh"].where(df["sh"] > 0)).fillna(0.0)
+    df["xa_por_kp"] = (df["xa"] / df["kp"].where(df["kp"] > 0)).fillna(0.0)
+    return df

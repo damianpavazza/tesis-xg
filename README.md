@@ -76,6 +76,8 @@ equipos.porcentaje_victorias_segun_xg_y_ppda(conexion, codigo_liga="EPL")
 equipos.disparos_de_partido(conexion, partido_id=28778)
 equipos.linea_tiempo_xg_partido(conexion, partido_id=28778)
 jugadores.goles_vs_xg_por_jugador(conexion, temporada=2025, minutos_minimos=1800)
+jugadores.resumen_por_temporada(conexion, jugador_id=1250)                    # tabla por temporada (Mohamed Salah)
+jugadores.desglose_de_disparos(conexion, 1250, "situacion", temporada=2024)   # o "zona" / "tipo_disparo"
 ```
 
 No se implementó "distribución del xG por edad de los ejecutantes"

@@ -294,3 +294,118 @@ def test_buscar_jugadores_el_filtro_acota_quien_aparece_pero_no_su_trayectoria(c
     assert set(jugadores.buscar_jugadores(conexion, temporada=2021)["jugador_id"]) == {200}
     assert set(jugadores.buscar_jugadores(conexion, codigo_liga="EPL")["jugador_id"]) == {200, 300}
     assert jugadores.buscar_jugadores(conexion, codigo_liga="XXX").empty
+
+
+def test_zona_de_tiro() -> None:
+    import pandas as pd
+
+    x = pd.Series([0.97, 0.95, 0.90, 0.885, 0.5, 0.97, 0.90])
+    y = pd.Series([0.50, 0.55, 0.50, 0.50, 0.10, 0.70, 0.10])
+    zonas = jugadores.zona_de_tiro(x, y).tolist()
+    assert zonas == [
+        "area_chica",       # pegado al arco y centrado
+        "area_chica",
+        "area_grande",
+        "area_grande",      # el punto de penal (x=0.885) cae en el área grande
+        "fuera_del_area",   # mitad de cancha
+        "area_grande",      # profundidad de área chica pero muy abierto: solo área grande
+        "fuera_del_area",   # profundo pero pegado a la línea lateral
+    ]
+
+
+def _poblar_roles_de_disparos(conexion) -> None:
+    """El jugador 100 tira 4 veces (3 ya cargadas por el fixture + 1 de córner) y
+    además da dos pases clave (a 300 y a 200); el 200 lo asiste en el córner."""
+    _poblar_jugadores_temporada(conexion)  # crea los jugadores 200 y 300
+    conexion.execute(
+        """
+        INSERT INTO jugador_temporada
+            (jugador_id, temporada_id, equipo, posicion, partidos, minutos, goles, goles_np,
+             asistencias, xg, xg_np, xa, disparos, pases_clave)
+        VALUES (100, 1, 'A', 'F', 10, 900, 2, 2, 1, 0.75, 0.75, 0.45, 4, 2)
+        """
+    )
+    conexion.executescript(
+        """
+        INSERT INTO disparo
+            (id, partido_id, equipo_id, jugador_id, jugador_asistencia_id, minuto, x, y,
+             resultado, situacion, tipo_disparo, es_gol, xg_understat)
+        VALUES
+            (10, 1, 1, 100, 200, 60, 0.97, 0.50, 'Goal',      'FromCorner', 'Head',      1, 0.20),
+            (11, 1, 1, 300, 100, 61, 0.50, 0.10, 'SavedShot', 'OpenPlay',   'LeftFoot',  0, 0.05),
+            (12, 1, 1, 200, 100, 62, 0.95, 0.55, 'Goal',      'OpenPlay',   'RightFoot', 1, 0.40);
+        """
+    )
+    conexion.commit()
+
+
+def test_resumen_por_temporada_deltas_per_90_y_total(conexion) -> None:
+    _poblar_jugadores_temporada(conexion)
+    df = jugadores.resumen_por_temporada(conexion, jugador_id=200)
+
+    assert list(df["temporada"]) == [2020, "Total"]
+    fila = df.iloc[0]
+    # 1800 min, 50 disparos, 10 pases clave, xG 10.0, xA 1.0, 15 goles, 2 asistencias
+    assert fila["sh90"] == pytest.approx(50 / 1800 * 90)
+    assert fila["kp90"] == pytest.approx(10 / 1800 * 90)
+    assert fila["xg90"] == pytest.approx(10 / 1800 * 90)
+    assert fila["xa90"] == pytest.approx(1 / 1800 * 90)
+    assert fila["dif_xg"] == pytest.approx(10.0 - 15)  # esperado - real
+    assert fila["dif_xa"] == pytest.approx(1.0 - 2)
+    assert df.iloc[1]["g"] == 15  # con una sola temporada el total coincide
+
+
+def test_desglose_de_disparos_por_situacion_incluye_pases_clave_y_asistencias(conexion) -> None:
+    _poblar_roles_de_disparos(conexion)
+    df = jugadores.desglose_de_disparos(conexion, jugador_id=100, categoria="situacion")
+    por_cat = df.set_index("categoria")
+
+    abierto = por_cat.loc["OpenPlay"]
+    assert (abierto["sh"], abierto["g"]) == (3, 1)           # los 3 disparos del fixture
+    assert abierto["xg"] == pytest.approx(0.55)
+    assert (abierto["kp"], abierto["a"]) == (2, 1)           # pases a 300 y a 200; solo el 2.º terminó en gol
+    assert abierto["xa"] == pytest.approx(0.45)
+
+    corner = por_cat.loc["FromCorner"]
+    assert (corner["sh"], corner["g"], corner["kp"], corner["a"]) == (1, 1, 0, 0)
+
+    total = por_cat.loc["Total"]
+    assert (total["sh"], total["g"], total["kp"], total["a"]) == (4, 2, 2, 1)
+    assert total["xg90"] == pytest.approx(0.75 / 900 * 90)   # 900 min en jugador_temporada
+    assert total["xg_por_sh"] == pytest.approx(0.75 / 4)
+    assert total["xa_por_kp"] == pytest.approx(0.45 / 2)
+    assert df.iloc[-1]["categoria"] == "Total"
+
+
+def test_desglose_de_disparos_por_zona_y_por_tipo(conexion) -> None:
+    _poblar_roles_de_disparos(conexion)
+
+    zonas = jugadores.desglose_de_disparos(conexion, 100, "zona").set_index("categoria")
+    assert (zonas.loc["area_grande", "sh"], zonas.loc["area_grande", "g"]) == (3, 1)
+    # área chica: el cabezazo de córner que tiró (1 disparo) + el pase clave a 200 (gol)
+    assert (zonas.loc["area_chica", "sh"], zonas.loc["area_chica", "kp"], zonas.loc["area_chica", "a"]) == (1, 1, 1)
+    # el pase al disparo de 300 desde mitad de cancha: sin disparos propios en esa zona
+    assert (zonas.loc["fuera_del_area", "sh"], zonas.loc["fuera_del_area", "kp"]) == (0, 1)
+
+    tipos = jugadores.desglose_de_disparos(conexion, 100, "tipo_disparo").set_index("categoria")
+    assert tipos.loc["RightFoot", "sh"] == 2 and tipos.loc["Head", "sh"] == 1
+
+
+def test_desglose_de_disparos_filtra_por_temporada_y_valida_la_categoria(conexion) -> None:
+    _poblar_roles_de_disparos(conexion)
+    assert jugadores.desglose_de_disparos(conexion, 100, "situacion", temporada=1999).empty
+    assert not jugadores.desglose_de_disparos(conexion, 100, "situacion", temporada=2020).empty
+    with pytest.raises(ValueError):
+        jugadores.desglose_de_disparos(conexion, 100, "inexistente")
+
+
+def test_disparos_de_jugador_trae_el_detalle_del_tooltip(conexion) -> None:
+    _poblar_roles_de_disparos(conexion)
+    disparos = jugadores.disparos_de_jugador(conexion, jugador_id=100).set_index("id")
+
+    corner = disparos.loc[10]
+    assert corner["situacion"] == "FromCorner" and corner["tipo_disparo"] == "Head"
+    assert corner["asistente"] == "Titular"                    # el jugador 200
+    assert (corner["local"], corner["visitante"]) == ("A", "B")
+    assert corner["fecha"].startswith("2020-09-01")
+    assert not isinstance(disparos.loc[1]["asistente"], str)    # disparo sin asistencia (pandas: NaN)
