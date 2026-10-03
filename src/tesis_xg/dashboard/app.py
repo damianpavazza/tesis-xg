@@ -274,7 +274,9 @@ def _vista_liga(conexion: sqlite3.Connection, codigo_liga: str, temporada: int) 
         df.sort_values("diferencia_posicion"), x="equipo", y="diferencia_posicion",
         title="Diferencia de posición (real − xPTS): negativo = terminó mejor que lo esperado",
         color="diferencia_posicion", color_continuous_scale="RdBu_r",
+        labels={"equipo": "Equipo", "diferencia_posicion": "Diferencia de posición"},
     )
+    fig.update_layout(coloraxis_colorbar_title_text="Dif. pos")
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -300,7 +302,10 @@ def _figura_evolucion_equipo(df: pd.DataFrame) -> go.Figure:
 
     fig.update_layout(
         height=650, hovermode="x unified",
-        xaxis=dict(anchor="y2", showgrid=True, showspikes=True, spikemode="across", spikethickness=1),
+        xaxis=dict(
+            anchor="y2", title="Temporada", showgrid=True,
+            showspikes=True, spikemode="across", spikethickness=1,
+        ),
         yaxis=dict(domain=[0.58, 1.0]),
         yaxis2=dict(domain=[0.0, 0.42], anchor="x"),
         legend=dict(orientation="h", yanchor="bottom", y=1.1, x=0),
@@ -347,11 +352,13 @@ def _vista_jugador(conexion: sqlite3.Connection, codigo_liga: str, temporada: in
     st.header(f"Goles contra xG por temporada — {nombre}")
     evolucion = _evolucion_jugador(conexion, jugador_id)
     evolucion = evolucion.assign(temporada=evolucion["temporada"].map(etiqueta_temporada))
+    evolucion = evolucion.rename(columns={"goles": "Goles", "xg_understat": "xG"})
     fig = px.bar(
-        evolucion, x="temporada", y=["goles", "xg_understat"], barmode="group",
+        evolucion, x="temporada", y=["Goles", "xG"], barmode="group",
         title="Goles vs. xG por temporada",
+        labels={"temporada": "Temporada", "value": "Goles / xG", "variable": "Serie"},
     )
-    fig.update_layout(yaxis_hoverformat=".2f")
+    fig.update_layout(yaxis_hoverformat=".2f", legend_title_text="")
     st.plotly_chart(fig, use_container_width=True)
 
     st.subheader(f"Mapa de disparos — {etiqueta_temporada(temporada)}")
@@ -401,9 +408,12 @@ def _vista_linea_tiempo(conexion: sqlite3.Connection, codigo_liga: str, temporad
 
     st.header("xG acumulado a lo largo del partido")
     linea = _linea_tiempo_partido(conexion, partido_id)
-    fig = px.line(linea, x="minuto", y="xg_acumulado", color="equipo", markers=True, line_shape="hv")
+    fig = px.line(
+        linea, x="minuto", y="xg_acumulado", color="equipo", markers=True, line_shape="hv",
+        labels={"minuto": "Minuto", "xg_acumulado": "xG acumulado", "equipo": "Equipo"},
+    )
     fig.update_xaxes(range=[0, 95])
-    fig.update_layout(yaxis_hoverformat=".2f")
+    fig.update_layout(yaxis_hoverformat=".2f", legend_title_text="")
     st.plotly_chart(fig, use_container_width=True)
 
 
