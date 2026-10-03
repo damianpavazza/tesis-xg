@@ -1,4 +1,4 @@
-"""Dashboard Streamlit (sección 8): 5 vistas, lectura directa desde
+"""Dashboard Streamlit (sección 8): 4 vistas, lectura directa desde
 SQLite con caché de consultas. Se ejecuta con `python -m tesis_xg dashboard`.
 """
 
@@ -143,6 +143,16 @@ def _disparos_de_partido(_conexion: sqlite3.Connection, partido_id: int) -> pd.D
 @st.cache_data
 def _linea_tiempo_partido(_conexion: sqlite3.Connection, partido_id: int) -> pd.DataFrame:
     return equipos.linea_tiempo_xg_partido(_conexion, partido_id)
+
+
+@st.cache_data
+def _goles_de_partido(_conexion: sqlite3.Connection, partido_id: int) -> pd.DataFrame:
+    return equipos.goles_de_partido(_conexion, partido_id)
+
+
+@st.cache_data
+def _estadisticas_de_partido(_conexion: sqlite3.Connection, partido_id: int) -> pd.DataFrame:
+    return equipos.estadisticas_de_partido(_conexion, partido_id)
 
 
 COLUMNAS_EVOLUCION_EQUIPO = {"temporada": "Temporada", "xg": "xG", "xga": "xGA", "ppda_coef": "ppda"}
@@ -547,34 +557,49 @@ def _vista_jugador(conexion: sqlite3.Connection) -> None:
     st.plotly_chart(fig_cancha, use_container_width=True)
 
 
+COLOR_LOCAL = "crimson"
+COLOR_VISITANTE = "royalblue"
+
+
 def _selector_partido(conexion: sqlite3.Connection, codigo_liga: str, temporada: int) -> int | None:
+    """Elige un partido de la temporada. Los filtros de equipo acotan la lista:
+    con un equipo se listan sus partidos y con los dos, los que los enfrentan."""
     partidos = _partidos_de_temporada(conexion, codigo_liga, temporada)
     if partidos.empty:
         st.info("Sin partidos para esta liga/temporada.")
         return None
-    partidos = partidos.copy()
-    partidos["etiqueta"] = (
-        partidos["fecha"].str.slice(0, 10) + ": " + partidos["local"] + " " +
-        partidos["goles_local"].astype(str) + "-" + partidos["goles_visitante"].astype(str) +
-        " " + partidos["visitante"]
+
+    columna_a, columna_b, columna_partido = st.columns([1, 1, 2])
+    nombres = sorted(set(partidos["local"]) | set(partidos["visitante"]))
+    equipo_a = columna_a.selectbox("Equipo A", nombres, index=None, placeholder="Todos")
+    # Con A elegido, B solo ofrece sus rivales: cualquier otro no tiene partidos.
+    if equipo_a:
+        de_a = partidos[(partidos["local"] == equipo_a) | (partidos["visitante"] == equipo_a)]
+        nombres_b = sorted((set(de_a["local"]) | set(de_a["visitante"])) - {equipo_a})
+    else:
+        nombres_b = nombres
+    equipo_b = columna_b.selectbox("Equipo B", nombres_b, index=None, placeholder="Todos")
+
+    partidos = equipos.filtrar_partidos(partidos, equipo_a, equipo_b)
+    if partidos.empty:
+        st.info("Sin partidos para esos equipos en esta temporada.")
+        return None
+    partidos = partidos.assign(
+        etiqueta=(
+            partidos["fecha"].str.slice(0, 10) + ": " + partidos["local"] + " " +
+            partidos["goles_local"].astype(str) + "-" + partidos["goles_visitante"].astype(str) +
+            " " + partidos["visitante"]
+        )
     )
-    etiqueta = st.selectbox("Partido", partidos["etiqueta"])
+    etiqueta = columna_partido.selectbox(f"Partido ({len(partidos)})", partidos["etiqueta"])
     return int(partidos.set_index("etiqueta").loc[etiqueta, "id"])
 
 
-def _vista_partido(conexion: sqlite3.Connection, codigo_liga: str, temporada: int) -> None:
-    partido_id = _selector_partido(conexion, codigo_liga, temporada)
-    if partido_id is None:
-        return
-
-    st.header("Mapa de disparos")
+def _pestana_mapa_disparos(conexion: sqlite3.Connection, partido_id: int, estadisticas: pd.DataFrame) -> None:
     disparos = _disparos_de_partido(conexion, partido_id)
-    equipos_partido = disparos[["equipo_id", "equipo"]].drop_duplicates().to_records(index=False)
-    colores = ["crimson", "royalblue"]
-
     fig = _figura_cancha()
-    for (equipo_id, nombre_equipo), color in zip(equipos_partido, colores):
-        _agregar_disparos_a_cancha(fig, disparos[disparos["equipo_id"] == equipo_id], nombre_equipo, color)
+    for fila, color in zip(estadisticas.itertuples(), (COLOR_LOCAL, COLOR_VISITANTE)):
+        _agregar_disparos_a_cancha(fig, disparos[disparos["equipo_id"] == fila.equipo_id], fila.equipo, color)
     st.plotly_chart(fig, use_container_width=True)
     tabla = disparos.assign(
         es_gol=disparos["es_gol"].map({1: "Sí", 0: "No"}),
@@ -583,27 +608,112 @@ def _vista_partido(conexion: sqlite3.Connection, codigo_liga: str, temporada: in
     _mostrar_tabla(tabla, COLUMNAS_DISPAROS)
 
 
-def _vista_linea_tiempo(conexion: sqlite3.Connection, codigo_liga: str, temporada: int) -> None:
+def _figura_linea_tiempo(
+    linea: pd.DataFrame, goles: pd.DataFrame, estadisticas: pd.DataFrame
+) -> go.Figure:
+    """xG acumulado de ambos equipos con los goles marcados sobre cada curva."""
+    final = max(90, int(linea["minuto"].max()) if not linea.empty else 0, int(goles["minuto"].max()) if not goles.empty else 0)
+    fig = go.Figure()
+    for fila, color in zip(estadisticas.itertuples(), (COLOR_LOCAL, COLOR_VISITANTE)):
+        tiros = linea[linea["equipo_id"] == fila.equipo_id]
+        # La curva arranca en 0 y se extiende hasta el final del partido.
+        minutos = [0, *tiros["minuto"], final]
+        acumulado = [0.0, *tiros["xg_acumulado"], tiros["xg_acumulado"].iloc[-1] if len(tiros) else 0.0]
+        fig.add_trace(
+            go.Scatter(
+                x=minutos, y=acumulado, name=f"{fila.equipo} — {fila.xg:.2f} xG", mode="lines",
+                line=dict(color=color, width=2, shape="hv"), fill="tozeroy",
+                hovertemplate="Min %{x}: xG %{y:.2f}<extra>" + fila.equipo + "</extra>",
+            )
+        )
+        propios = goles[goles["equipo_id"] == fila.equipo_id]
+        # Altura del gol: el xG que acumulaba el equipo hasta ese minuto.
+        alturas = [tiros.loc[tiros["minuto"] <= m, "xg_acumulado"].max() for m in propios["minuto"]]
+        textos = [
+            f"{g.jugador or '—'}{' (en contra)' if g.en_contra else ''}<br>{g.goles_local} - {g.goles_visitante} · {g.minuto}'"
+            for g in propios.itertuples()
+        ]
+        fig.add_trace(
+            go.Scatter(
+                x=propios["minuto"], y=[0.0 if pd.isna(a) else a for a in alturas], mode="markers",
+                name=f"Goles de {fila.equipo}", showlegend=False, text=textos, hoverinfo="text",
+                marker=dict(size=14, color="gold", symbol="star", line=dict(width=1.5, color="black")),
+            )
+        )
+    fig.update_xaxes(range=[0, final], title_text="Minuto")
+    fig.update_yaxes(title_text="xG acumulado", rangemode="tozero")
+    fig.update_layout(legend=dict(orientation="h", y=1.1), margin=dict(t=40), height=450)
+    return fig
+
+
+ESTADISTICAS_PARTIDO = [
+    # (columna, etiqueta, decimales)
+    ("goles", "Goles", 0),
+    ("xg", "xG", 2),
+    ("tiros", "Tiros", 0),
+    ("tiros_al_arco", "Tiros al arco", 0),
+    ("deep", "Deep", 0),
+    ("ppda", "PPDA", 2),
+    ("xpts", "xPTS", 2),
+]
+
+
+def _figura_estadisticas(estadisticas: pd.DataFrame) -> go.Figure:
+    """Una barra por estadística repartida entre los dos equipos según su
+    proporción, con el valor de cada uno escrito sobre su tramo."""
+    local, visitante = estadisticas.iloc[0], estadisticas.iloc[1]
+    etiquetas = [etiqueta for _, etiqueta, _ in ESTADISTICAS_PARTIDO]
+    fig = go.Figure()
+    for fila, color in ((local, COLOR_LOCAL), (visitante, COLOR_VISITANTE)):
+        proporciones, textos = [], []
+        for columna, _, decimales in ESTADISTICAS_PARTIDO:
+            propio, rival = fila[columna], (visitante if fila is local else local)[columna]
+            total = propio + rival
+            proporciones.append(propio / total if total else 0.5)
+            textos.append(f"{propio:.{decimales}f}")
+        fig.add_trace(
+            go.Bar(
+                y=etiquetas, x=proporciones, orientation="h", name=fila["equipo"], marker_color=color,
+                text=textos, textposition="inside", insidetextanchor="middle",
+                textfont=dict(size=16, color="white"), hoverinfo="name+text",
+            )
+        )
+    fig.update_xaxes(visible=False, range=[0, 1])
+    fig.update_yaxes(autorange="reversed")
+    fig.update_layout(
+        barmode="stack", bargap=0.25, height=60 * len(etiquetas) + 60,
+        legend=dict(orientation="h", y=1.08, traceorder="normal"), margin=dict(t=40, b=0),
+    )
+    return fig
+
+
+def _vista_partido(conexion: sqlite3.Connection, codigo_liga: str, temporada: int) -> None:
     partido_id = _selector_partido(conexion, codigo_liga, temporada)
     if partido_id is None:
         return
 
-    st.header("xG acumulado a lo largo del partido")
-    linea = _linea_tiempo_partido(conexion, partido_id)
-    fig = px.line(
-        linea, x="minuto", y="xg_acumulado", color="equipo", markers=True, line_shape="hv",
-        labels={"minuto": "Minuto", "xg_acumulado": "xG acumulado", "equipo": "Equipo"},
+    estadisticas = _estadisticas_de_partido(conexion, partido_id)
+    local, visitante = estadisticas.iloc[0], estadisticas.iloc[1]
+    st.subheader(f"{local['equipo']} {local['goles']:.0f} - {visitante['goles']:.0f} {visitante['equipo']}")
+
+    pestana_mapa, pestana_linea, pestana_estadisticas = st.tabs(
+        ["Mapa de disparos", "Línea de tiempo", "Estadísticas"]
     )
-    fig.update_xaxes(range=[0, 95])
-    fig.update_layout(yaxis_hoverformat=".2f", legend_title_text="")
-    st.plotly_chart(fig, use_container_width=True)
+    with pestana_mapa:
+        _pestana_mapa_disparos(conexion, partido_id, estadisticas)
+    with pestana_linea:
+        linea = _linea_tiempo_partido(conexion, partido_id)
+        goles = _goles_de_partido(conexion, partido_id)
+        st.plotly_chart(_figura_linea_tiempo(linea, goles, estadisticas), use_container_width=True)
+    with pestana_estadisticas:
+        st.plotly_chart(_figura_estadisticas(estadisticas), use_container_width=True)
 
 
-VISTAS = ["Liga", "Equipo", "Jugador", "Partido", "Línea de tiempo"]
+VISTAS = ["Liga", "Equipo", "Jugador", "Partido"]
 # Filtros de la barra lateral que usa cada vista. Equipo es un histórico de todas las
 # temporadas, y Jugador tiene su propio buscador: ninguno de los dos filtra por temporada.
-VISTAS_CON_LIGA = {"Liga", "Equipo", "Partido", "Línea de tiempo"}
-VISTAS_CON_TEMPORADA = {"Liga", "Partido", "Línea de tiempo"}
+VISTAS_CON_LIGA = {"Liga", "Equipo", "Partido"}
+VISTAS_CON_TEMPORADA = {"Liga", "Partido"}
 
 
 def main() -> None:
@@ -646,8 +756,6 @@ def main() -> None:
         _vista_jugador(conexion)
     elif vista == "Partido":
         _vista_partido(conexion, codigo_liga, temporada)
-    elif vista == "Línea de tiempo":
-        _vista_linea_tiempo(conexion, codigo_liga, temporada)
 
 
 main()

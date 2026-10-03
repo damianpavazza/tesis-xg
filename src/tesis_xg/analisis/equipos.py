@@ -77,6 +77,64 @@ def linea_tiempo_xg_partido(conexion: sqlite3.Connection, partido_id: int) -> pd
     return disparos[["minuto", "equipo_id", "equipo", "xg_understat", "xg_acumulado"]].reset_index(drop=True)
 
 
+def goles_de_partido(conexion: sqlite3.Connection, partido_id: int) -> pd.DataFrame:
+    """Goles del partido en orden, con el marcador después de cada uno, para
+    marcarlos en la línea de tiempo. Un gol en contra figura como disparo del
+    equipo que lo cometió: se asigna al rival, que es a quien le suma."""
+    partido = conexion.execute(
+        "SELECT equipo_local_id, equipo_visitante_id FROM partido WHERE id = ?", (partido_id,)
+    ).fetchone()
+    if partido is None:
+        return pd.DataFrame(columns=["minuto", "equipo_id", "jugador", "en_contra", "goles_local", "goles_visitante"])
+    local_id, visitante_id = partido
+    consulta = """
+        SELECT d.minuto, d.equipo_id, j.nombre AS jugador, d.resultado = 'OwnGoal' AS en_contra
+        FROM disparo d
+        LEFT JOIN jugador j ON j.id = d.jugador_id
+        WHERE d.partido_id = :partido_id AND d.resultado IN ('Goal', 'OwnGoal')
+        ORDER BY d.minuto, d.id
+    """
+    goles = pd.read_sql_query(consulta, conexion, params={"partido_id": partido_id})
+    goles["en_contra"] = goles["en_contra"].astype(bool)
+    rival = {local_id: visitante_id, visitante_id: local_id}
+    goles["equipo_id"] = [rival[e] if en_contra else e for e, en_contra in zip(goles["equipo_id"], goles["en_contra"])]
+    goles["goles_local"] = (goles["equipo_id"] == local_id).cumsum()
+    goles["goles_visitante"] = (goles["equipo_id"] == visitante_id).cumsum()
+    return goles
+
+
+def estadisticas_de_partido(conexion: sqlite3.Connection, partido_id: int) -> pd.DataFrame:
+    """Comparativa de los dos equipos de un partido (pestaña de estadísticas),
+    con el local primero. Los tiros al arco son los goles y los disparos
+    atajados, como los cuenta Understat."""
+    consulta = """
+        SELECT ep.equipo_id, e.nombre AS equipo, ep.condicion, ep.goles, ep.xg,
+               COUNT(d.id) AS tiros,
+               COALESCE(SUM(d.resultado IN ('Goal', 'SavedShot')), 0) AS tiros_al_arco,
+               ep.deep, ep.ppda_coef AS ppda, ep.xpts
+        FROM equipo_partido ep
+        JOIN equipo e ON e.id = ep.equipo_id
+        LEFT JOIN disparo d ON d.partido_id = ep.partido_id AND d.equipo_id = ep.equipo_id
+        WHERE ep.partido_id = :partido_id
+        GROUP BY ep.equipo_id
+        ORDER BY ep.condicion DESC
+    """
+    return pd.read_sql_query(consulta, conexion, params={"partido_id": partido_id})
+
+
+def filtrar_partidos(partidos: pd.DataFrame, equipo_a: str | None, equipo_b: str | None) -> pd.DataFrame:
+    """Partidos de un equipo, o los que enfrentan a dos. Sin equipos devuelve
+    todos. Con un solo equipo no importa cuál de los dos filtros se use."""
+    elegidos = [e for e in (equipo_a, equipo_b) if e]
+    if not elegidos:
+        return partidos
+    juega = {e: (partidos["local"] == e) | (partidos["visitante"] == e) for e in elegidos}
+    mascara = juega[elegidos[0]]
+    for e in elegidos[1:]:
+        mascara = mascara & juega[e]
+    return partidos[mascara]
+
+
 def evolucion_equipo_por_temporada(conexion: sqlite3.Connection, equipo_id: int) -> pd.DataFrame:
     """Evolución de xG, xGA y ppda de un equipo a lo largo de las
     temporadas en las que jugó. No está entre las funciones que pide la

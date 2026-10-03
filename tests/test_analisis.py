@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from tesis_xg.almacenamiento import base
@@ -147,6 +148,42 @@ def test_disparos_y_linea_tiempo_de_partido(conexion) -> None:
     equipo_1 = linea[linea["equipo_id"] == 1].sort_values("minuto")
     # equipo 1 tira en el minuto 10 (0.10) y el 40 (0.30): acumulado 0.10, luego 0.40
     assert list(equipo_1["xg_acumulado"]) == pytest.approx([0.10, 0.40])
+
+
+def test_goles_de_partido_lleva_el_marcador_y_asigna_los_en_contra_al_rival(conexion) -> None:
+    conexion.execute(
+        """
+        INSERT INTO disparo
+            (id, partido_id, equipo_id, jugador_id, minuto, x, y,
+             resultado, situacion, tipo_disparo, es_gol, xg_understat)
+        VALUES (4, 1, 2, 100, 20, 0.10, 0.5, 'OwnGoal', 'OpenPlay', 'Head', 0, 0.0)
+        """
+    )
+    goles = equipos.goles_de_partido(conexion, partido_id=1)
+    # Minuto 20: gol en contra del equipo 2 (suma al 1); minuto 40: gol del equipo 1.
+    assert list(goles["minuto"]) == [20, 40]
+    assert list(goles["equipo_id"]) == [1, 1]
+    assert list(goles["en_contra"]) == [True, False]
+    assert list(goles["goles_local"]) == [1, 2]
+    assert list(goles["goles_visitante"]) == [0, 0]
+
+
+def test_estadisticas_de_partido(conexion) -> None:
+    df = equipos.estadisticas_de_partido(conexion, partido_id=1)
+    assert list(df["equipo"]) == ["A", "B"]  # el local primero
+    local, visitante = df.iloc[0], df.iloc[1]
+    assert (local["tiros"], local["tiros_al_arco"]) == (2, 1)  # un fallado y un gol
+    assert (visitante["tiros"], visitante["tiros_al_arco"]) == (1, 1)  # un atajado
+    assert local["xg"] == pytest.approx(40)  # el de equipo_partido, no la suma de disparos
+
+
+def test_filtrar_partidos_por_uno_o_dos_equipos() -> None:
+    partidos = pd.DataFrame({"local": ["A", "B", "A", "C"], "visitante": ["B", "C", "C", "A"]})
+    assert len(equipos.filtrar_partidos(partidos, None, None)) == 4
+    assert list(equipos.filtrar_partidos(partidos, "A", None).index) == [0, 2, 3]
+    assert list(equipos.filtrar_partidos(partidos, None, "A").index) == [0, 2, 3]
+    assert list(equipos.filtrar_partidos(partidos, "A", "C").index) == [2, 3]
+    assert list(equipos.filtrar_partidos(partidos, "B", "C").index) == [1]
 
 
 def test_evolucion_equipo_por_temporada(conexion) -> None:

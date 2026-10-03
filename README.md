@@ -86,9 +86,9 @@ endpoint — ver [DESVIACIONES.md](DESVIACIONES.md), Etapa 8.
 
 ## Dashboard
 
-`python -m tesis_xg dashboard` abre las 5 vistas de la sección 8 (Liga,
-Equipo, Jugador, Partido, Línea de tiempo) con selector de liga y
-temporada en la barra lateral. Verificado en el navegador contra la
+`python -m tesis_xg dashboard` abre las 4 vistas del dashboard (Liga,
+Equipo, Jugador, Partido; la línea de tiempo de la sección 8 es una
+pestaña de Partido) con selector de liga y temporada en la barra lateral. Verificado en el navegador contra la
 base completa — ver DESVIACIONES.md, Etapa 9, para el detalle.
 
 El backfill histórico completo (2014-2025, 5 ligas) ya se corrió una vez
