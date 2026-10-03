@@ -177,9 +177,10 @@ def _mostrar_tabla(df: pd.DataFrame, etiquetas: dict[str, str]) -> None:
     )
 
 
-def _figura_cancha() -> go.Figure:
+def _figura_cancha(ambos_arcos: bool = False) -> go.Figure:
     """Cancha reglamentaria (105x68m), arco atacado a la derecha (x=105),
-    tal como Understat normaliza las coordenadas de cada disparo."""
+    tal como Understat normaliza las coordenadas de cada disparo. Con
+    `ambos_arcos` se dibujan también el área y el arco de la izquierda."""
     fig = go.Figure()
     lineas = dict(line=dict(color="rgba(255,255,255,0.4)", width=1.5))
 
@@ -200,6 +201,14 @@ def _figura_cancha() -> go.Figure:
         x1=LARGO_CANCHA_M, y1=ANCHO_CANCHA_M / 2 + 3.66,
         line=dict(color="white", width=4),
     )
+
+    if ambos_arcos:
+        fig.add_shape(type="rect", x0=0, y0=13.84, x1=16.5, y1=54.16, **lineas)
+        fig.add_shape(type="rect", x0=0, y0=24.84, x1=5.5, y1=43.16, **lineas)
+        fig.add_shape(
+            type="line", x0=0, y0=ANCHO_CANCHA_M / 2 - 3.66, x1=0, y1=ANCHO_CANCHA_M / 2 + 3.66,
+            line=dict(color="white", width=4),
+        )
 
     fig.update_xaxes(range=[-2, LARGO_CANCHA_M + 2], visible=False)
     fig.update_yaxes(range=[-2, ANCHO_CANCHA_M + 2], visible=False, scaleanchor="x", scaleratio=1)
@@ -234,13 +243,18 @@ def _textos_hover(disparos: pd.DataFrame) -> list[str]:
     return textos
 
 
-def _agregar_disparos_a_cancha(fig: go.Figure, disparos: pd.DataFrame, nombre: str, color: str) -> None:
+def _agregar_disparos_a_cancha(
+    fig: go.Figure, disparos: pd.DataFrame, nombre: str, color: str, espejar: bool = False
+) -> None:
+    """`espejar` gira la cancha 180° para dibujar al equipo atacando el arco
+    de la izquierda (los dos equipos de un partido, uno en cada arco)."""
     if disparos.empty:
         return
     disparos = disparos.copy()
     disparos["texto"] = _textos_hover(disparos)
-    disparos["x_m"] = disparos["x"] * LARGO_CANCHA_M
-    disparos["y_m"] = disparos["y"] * ANCHO_CANCHA_M
+    x, y = (1 - disparos["x"], 1 - disparos["y"]) if espejar else (disparos["x"], disparos["y"])
+    disparos["x_m"] = x * LARGO_CANCHA_M
+    disparos["y_m"] = y * ANCHO_CANCHA_M
     disparos["tamano"] = 8 + disparos["xg_understat"] * 45
 
     no_gol = disparos[disparos["es_gol"] == 0]
@@ -597,9 +611,12 @@ def _selector_partido(conexion: sqlite3.Connection, codigo_liga: str, temporada:
 
 def _pestana_mapa_disparos(conexion: sqlite3.Connection, partido_id: int, estadisticas: pd.DataFrame) -> None:
     disparos = _disparos_de_partido(conexion, partido_id)
-    fig = _figura_cancha()
-    for fila, color in zip(estadisticas.itertuples(), (COLOR_LOCAL, COLOR_VISITANTE)):
-        _agregar_disparos_a_cancha(fig, disparos[disparos["equipo_id"] == fila.equipo_id], fila.equipo, color)
+    fig = _figura_cancha(ambos_arcos=True)
+    # El local ataca el arco de la izquierda y el visitante el de la derecha.
+    for fila, color, espejar in zip(estadisticas.itertuples(), (COLOR_LOCAL, COLOR_VISITANTE), (True, False)):
+        _agregar_disparos_a_cancha(
+            fig, disparos[disparos["equipo_id"] == fila.equipo_id], fila.equipo, color, espejar
+        )
     st.plotly_chart(fig, use_container_width=True)
     tabla = disparos.assign(
         es_gol=disparos["es_gol"].map({1: "Sí", 0: "No"}),
