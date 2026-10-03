@@ -256,6 +256,42 @@ def _vista_liga(conexion: sqlite3.Connection, codigo_liga: str, temporada: int) 
     st.plotly_chart(fig, use_container_width=True)
 
 
+def _figura_evolucion_equipo(df: pd.DataFrame) -> go.Figure:
+    """xG/xGA y ppda en dos paneles apilados que comparten un único eje de
+    temporadas: mismo ancho exacto y líneas verticales continuas para leer un
+    año de arriba a abajo, y cada métrica en su propia escala (mezclarlas en un
+    solo eje Y daría cruces sin significado). El tooltip es por panel: Plotly
+    no junta series de paneles distintos en un mismo cuadro."""
+    fig = go.Figure()
+    series = [
+        ("xg", "xG", "#74c0fc", "y"),
+        ("xga", "xGA", "#ff8787", "y"),
+        ("ppda_coef", "ppda", "#ffd43b", "y2"),
+    ]
+    for columna, nombre, color, eje_y in series:
+        fig.add_trace(
+            go.Scatter(
+                x=df["temporada"], y=df[columna], name=nombre, mode="lines+markers",
+                line=dict(color=color), yaxis=eje_y, hovertemplate="%{y:.2f}",
+            )
+        )
+
+    fig.update_layout(
+        height=650, hovermode="x unified",
+        xaxis=dict(anchor="y2", showgrid=True, showspikes=True, spikemode="across", spikethickness=1),
+        yaxis=dict(domain=[0.58, 1.0]),
+        yaxis2=dict(domain=[0.0, 0.42], anchor="x"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.1, x=0),
+        margin=dict(t=100),
+    )
+    for texto, y in (("xG y xGA (suma de la temporada)", 1.0), ("ppda (promedio por partido)", 0.42)):
+        fig.add_annotation(
+            text=f"<b>{texto}</b>", xref="paper", yref="paper", x=0, y=y,
+            xanchor="left", yanchor="bottom", showarrow=False,
+        )
+    return fig
+
+
 def _vista_equipo(conexion: sqlite3.Connection, codigo_liga: str) -> None:
     equipos_df = _equipos_de_liga(conexion, codigo_liga)
     nombre = st.selectbox("Equipo", equipos_df["nombre"])
@@ -268,11 +304,12 @@ def _vista_equipo(conexion: sqlite3.Connection, codigo_liga: str) -> None:
         return
     df = df.assign(temporada=df["temporada"].map(etiqueta_temporada))
 
-    fig_xg = px.line(df, x="temporada", y=["xg", "xga"], markers=True, title="xG / xGA por temporada")
-    st.plotly_chart(fig_xg, use_container_width=True)
-
-    fig_ppda = px.line(df, x="temporada", y="ppda_coef", markers=True, title="ppda por temporada")
-    st.plotly_chart(fig_ppda, use_container_width=True)
+    st.plotly_chart(_figura_evolucion_equipo(df), use_container_width=True)
+    st.caption(
+        "xG y xGA son la suma de la temporada; ppda es el promedio por partido (pases permitidos "
+        "por acción defensiva: un valor más bajo implica una presión más intensa). Hacé clic en la "
+        "leyenda para ocultar o mostrar cada serie."
+    )
 
     st.dataframe(df, use_container_width=True, hide_index=True)
 
