@@ -136,6 +136,16 @@ def _linea_tiempo_partido(_conexion: sqlite3.Connection, partido_id: int) -> pd.
     return equipos.linea_tiempo_xg_partido(_conexion, partido_id)
 
 
+def _mostrar_tabla(df: pd.DataFrame) -> None:
+    """Tabla con las columnas decimales redondeadas a 2 decimales."""
+    formato = {
+        columna: st.column_config.NumberColumn(format="%.2f")
+        for columna in df.columns
+        if pd.api.types.is_float_dtype(df[columna])
+    }
+    st.dataframe(df, use_container_width=True, hide_index=True, column_config=formato)
+
+
 def _figura_cancha() -> go.Figure:
     """Cancha reglamentaria (105x68m), arco atacado a la derecha (x=105),
     tal como Understat normaliza las coordenadas de cada disparo."""
@@ -311,7 +321,7 @@ def _vista_equipo(conexion: sqlite3.Connection, codigo_liga: str) -> None:
         "leyenda para ocultar o mostrar cada serie."
     )
 
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    _mostrar_tabla(df)
 
 
 def _vista_jugador(conexion: sqlite3.Connection, codigo_liga: str, temporada: int) -> None:
@@ -329,6 +339,7 @@ def _vista_jugador(conexion: sqlite3.Connection, codigo_liga: str, temporada: in
         evolucion, x="temporada", y=["goles", "xg_understat"], barmode="group",
         title="Goles vs. xG por temporada",
     )
+    fig.update_layout(yaxis_hoverformat=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
     st.subheader(f"Mapa de disparos — {etiqueta_temporada(temporada)}")
@@ -367,7 +378,7 @@ def _vista_partido(conexion: sqlite3.Connection, codigo_liga: str, temporada: in
     for (equipo_id, nombre_equipo), color in zip(equipos_partido, colores):
         _agregar_disparos_a_cancha(fig, disparos[disparos["equipo_id"] == equipo_id], nombre_equipo, color)
     st.plotly_chart(fig, use_container_width=True)
-    st.dataframe(disparos, use_container_width=True, hide_index=True)
+    _mostrar_tabla(disparos)
 
 
 def _vista_linea_tiempo(conexion: sqlite3.Connection, codigo_liga: str, temporada: int) -> None:
@@ -379,6 +390,7 @@ def _vista_linea_tiempo(conexion: sqlite3.Connection, codigo_liga: str, temporad
     linea = _linea_tiempo_partido(conexion, partido_id)
     fig = px.line(linea, x="minuto", y="xg_acumulado", color="equipo", markers=True, line_shape="hv")
     fig.update_xaxes(range=[0, 95])
+    fig.update_layout(yaxis_hoverformat=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
 
