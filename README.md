@@ -5,8 +5,14 @@ una tesis de grado. Extrae datos de Understat, los almacena en SQLite,
 entrena un modelo propio de goles esperados (xG) y expone los análisis
 en un dashboard.
 
-El diseño completo está en el documento "Especificación técnica del
-sistema".
+El diseño, la implementación y los resultados se describen en la tesis
+"Data analytics y fútbol: el aporte de los goles esperados al análisis
+del fútbol profesional" (Ingeniería en Informática, Universidad Nacional
+de Avellaneda, 2026).
+
+Los datos descargados, la base SQLite y los modelos entrenados no forman
+parte del repositorio: se regeneran con los comandos de la sección
+[Comandos](#comandos).
 
 ## Instalación
 
@@ -79,16 +85,11 @@ jugadores.resumen_por_temporada(conexion, jugador_id=1250)                    # 
 jugadores.desglose_de_disparos(conexion, 1250, "situacion", temporada=2024)   # o "zona" / "tipo_disparo"
 ```
 
-No se implementó "distribución del xG por edad de los ejecutantes"
-(sección 7 de la especificación): Understat no expone edad ni fecha de
-nacimiento en ningún endpoint.
-
 ## Dashboard
 
 `python -m tesis_xg dashboard` abre las 4 vistas del dashboard (Liga,
 Equipo, Jugador y Partido) con selector de liga y temporada en la barra
-lateral. La línea de tiempo de la sección 8 de la especificación es una
-pestaña de la vista Partido, junto con el mapa de disparos y las
+lateral. La línea de tiempo de xG es una pestaña de la vista Partido, junto con el mapa de disparos y las
 estadísticas del partido.
 
 El backfill histórico completo (2014-2025, 5 ligas) ya se corrió una vez
@@ -107,3 +108,7 @@ prácticamente instantáneas porque todo queda en caché (`data/cache/`):
 repetir el mismo comando sobre datos ya descargados tarda menos de un
 segundo. Por eso el proceso está pensado para poder interrumpirse
 (Ctrl+C, corte de red) y retomarse sin perder lo ya bajado.
+
+## Licencia
+
+El código se distribuye bajo la licencia MIT (ver `LICENSE`).
