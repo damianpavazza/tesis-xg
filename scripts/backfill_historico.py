@@ -3,7 +3,7 @@
 No es parte del CLI documentado en la sección 2 de la especificación
 (descargar/cargar/entrenar/evaluar/dashboard): es una herramienta operativa
 de una sola vez para construir el dataset histórico completo, reutilizando
-esas mismas funciones. Ver DESVIACIONES.md, sección "Backfill histórico".
+esas mismas funciones.
 
 Para cada temporada (en orden), descarga las 5 ligas configuradas, carga
 todo en la base y corre chequeos de calidad sobre esa temporada antes de

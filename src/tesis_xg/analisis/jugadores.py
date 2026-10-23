@@ -18,8 +18,7 @@ def goles_vs_xg_por_jugador(
 
     Nota: la especificación también pide "distribución del xG por edad
     de los ejecutantes", que no se implementó — Understat no expone
-    edad ni fecha de nacimiento en ningún endpoint (ver DESVIACIONES.md,
-    Etapa 8).
+    edad ni fecha de nacimiento en ningún endpoint.
     """
     consulta = """
         WITH xg_propio_temporada AS (

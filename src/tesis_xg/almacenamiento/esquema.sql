@@ -88,8 +88,7 @@ CREATE INDEX IF NOT EXISTS idx_partido_temporada ON partido(temporada_id);
 -- temporada, con mínimo de minutos configurable", y ese mínimo de
 -- minutos no tiene dónde vivir sin esta tabla. Viene del arreglo
 -- `players` de `getLeagueData`, que ya se descarga y cachea pero hasta
--- ahora solo se usaba para poblar `jugador` (id + nombre). Ver
--- DESVIACIONES.md, Etapa 8.
+-- ahora solo se usaba para poblar `jugador` (id + nombre).
 CREATE TABLE IF NOT EXISTS jugador_temporada (
     jugador_id    INTEGER NOT NULL REFERENCES jugador(id),
     temporada_id  INTEGER NOT NULL REFERENCES temporada(id),
